@@ -23,6 +23,17 @@ jobs:
     runs-on: ${{ matrix.platform }}
     steps:
       - uses: actions/checkout@v4
+      - name: Check updater signing setup
+        shell: bash
+        env:
+          KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+        run: |
+          if grep -q REPLACE_WITH_UPDATER_PUBLIC_KEY desktop/src-tauri/tauri.conf.json; then
+            echo "::error::Put the updater public key in desktop/src-tauri/tauri.conf.json (see README > Auto-updates)."; exit 1
+          fi
+          if [ -z "$KEY" ]; then
+            echo "::error::Add the TAURI_SIGNING_PRIVATE_KEY repository secret (see README > Auto-updates)."; exit 1
+          fi
       - uses: actions/setup-node@v4
         with:
           node-version: 22
@@ -36,6 +47,9 @@ jobs:
       - uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # Signs update bundles so installed apps can verify them (see README > Auto-updates).
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
           # Optional, for signed + notarized macOS builds (Apple Developer Program).
           # Add these as repository secrets; leave unset for unsigned builds.
           # APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
@@ -50,6 +64,7 @@ jobs:
           releaseName: "Wallpaper Rotator ${{ github.ref_type == 'tag' && github.ref_name || 'v__VERSION__' }}"
           releaseBody: "See the README for install steps. ChromeOS extension zip is attached below."
           releaseDraft: true
+          includeUpdaterJson: true
           args: ${{ matrix.args }}
 
   chromeos-extension:

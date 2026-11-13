@@ -103,6 +103,28 @@ Linux needs `libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev`
 to build the desktop app. It runs on Linux for development, but the wallpaper
 setters only target Windows and macOS.
 
+### Auto-updates (one-time setup)
+The desktop app checks GitHub Releases a minute after starting and then daily.
+By default it installs new versions on its own (users can turn this off in
+Settings → Advanced). Updates are signed, so the app only installs builds made
+with **your** private key.
+
+1. On your own computer (needs Node.js), generate a key pair and pick a password:
+   ```bash
+   npx @tauri-apps/cli signer generate -w ~/.tauri/wallpaperrotator.key
+   ```
+2. In GitHub → repo **Settings → Secrets and variables → Actions**, add:
+   - `TAURI_SIGNING_PRIVATE_KEY`: the contents of `~/.tauri/wallpaperrotator.key`
+   - `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`: the password you chose
+3. Put the contents of `~/.tauri/wallpaperrotator.key.pub` in
+   `desktop/src-tauri/tauri.conf.json` → `plugins.updater.pubkey`.
+4. **Back up the private key and password** (e.g. in a password manager).
+   If you lose them, installed apps can't auto-update anymore and everyone
+   has to reinstall by hand. Never commit the private key: this repo is public.
+
+Only **published** releases are offered as updates. Drafts aren't, so you can
+check a release before anyone gets it.
+
 ### Releasing
 1. Bump `version` in `Cargo.toml` (workspace), `desktop/src-tauri/tauri.conf.json`,
    and `chromeos-extension/manifest.json`.

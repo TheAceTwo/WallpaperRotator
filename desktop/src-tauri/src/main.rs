@@ -3,6 +3,7 @@
 
 mod config;
 mod engine;
+mod updater;
 
 use config::Config;
 use engine::{engine, Engine, Status};
@@ -10,7 +11,7 @@ use immich_core::{ImmichClient, ShareLink};
 use serde::Serialize;
 use tauri::menu::{CheckMenuItem, Menu, MenuItem, PredefinedMenuItem};
 use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
-use tauri::{AppHandle, Manager, WindowEvent, Wry};
+use tauri::{AppHandle, Emitter, Manager, WindowEvent, Wry};
 use tauri_plugin_autostart::{MacosLauncher, ManagerExt};
 
 const TRAY_ID: &str = "main";
@@ -78,6 +79,21 @@ fn get_status(app: AppHandle) -> Status {
 }
 
 #[tauri::command]
+fn app_version(app: AppHandle) -> String {
+    app.package_info().version.to_string()
+}
+
+#[tauri::command]
+async fn check_update(app: AppHandle) -> Result<Option<updater::UpdateInfo>, String> {
+    updater::check(&app).await
+}
+
+#[tauri::command]
+async fn install_update(app: AppHandle) -> Result<(), String> {
+    updater::install(&app).await
+}
+
+#[tauri::command]
 fn get_autostart(app: AppHandle) -> bool {
     app.autolaunch().is_enabled().unwrap_or(false)
 }
@@ -100,6 +116,10 @@ fn show_settings(app: &AppHandle) {
 
 fn build_menu(app: &AppHandle) -> tauri::Result<Menu<Wry>> {
     let paused = engine(app).config().paused;
+    let update_item = match updater::pending_version(app) {
+        Some(v) => MenuItem::with_id(app, "install-update", format!("Update to v{v}"), true, None::<&str>)?,
+        None => MenuItem::with_id(app, "check-update", "Check for updates", true, None::<&str>)?,
+    };
     Menu::with_items(
         app,
         &[
@@ -107,13 +127,14 @@ fn build_menu(app: &AppHandle) -> tauri::Result<Menu<Wry>> {
             &CheckMenuItem::with_id(app, "pause", "Pause", true, paused, None::<&str>)?,
             &PredefinedMenuItem::separator(app)?,
             &MenuItem::with_id(app, "settings", "Settings…", true, None::<&str>)?,
+            &update_item,
             &PredefinedMenuItem::separator(app)?,
             &MenuItem::with_id(app, "quit", "Quit", true, None::<&str>)?,
         ],
     )
 }
 
-fn refresh_tray(app: &AppHandle) {
+pub(crate) fn refresh_tray(app: &AppHandle) {
     if let Some(tray) = app.tray_by_id(TRAY_ID) {
         if let Ok(menu) = build_menu(app) {
             let _ = tray.set_menu(Some(menu));
@@ -145,6 +166,20 @@ fn setup_tray(app: &AppHandle) -> tauri::Result<()> {
                 refresh_tray(app);
             }
             "settings" => show_settings(app),
+            "check-update" => {
+                let app = app.clone();
+                tauri::async_runtime::spawn(async move {
+                    if let Ok(None) = updater::check(&app).await {
+                        let _ = app.emit("update-none", ());
+                    }
+                });
+            }
+            "install-update" => {
+                let app = app.clone();
+                tauri::async_runtime::spawn(async move {
+                    let _ = updater::install(&app).await;
+                });
+            }
             "quit" => app.exit(0),
             _ => {}
         })
@@ -167,6 +202,7 @@ fn main() {
     tauri::Builder::default()
         // A second launch just opens the existing instance's settings.
         .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| show_settings(app)))
+        .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_autostart::init(MacosLauncher::LaunchAgent, Some(vec!["--background"])))
         .invoke_handler(tauri::generate_handler![
             platform,
@@ -176,7 +212,10 @@ fn main() {
             next_wallpaper,
             get_status,
             get_autostart,
-            set_autostart
+            set_autostart,
+            app_version,
+            check_update,
+            install_update
         ])
         .setup(|app| {
             // Menu-bar only on macOS (no Dock icon).
@@ -185,6 +224,7 @@ fn main() {
 
             let handle = app.handle().clone();
             app.manage(Engine::new(&handle));
+            app.manage(updater::Pending::default());
             setup_tray(&handle)?;
 
             // First run (no link yet) or a manual launch: show settings.
@@ -197,6 +237,7 @@ fn main() {
             tauri::async_runtime::spawn(async move {
                 engine(&sched).run_scheduler(sched.clone()).await;
             });
+            tauri::async_runtime::spawn(updater::run_update_loop(handle.clone()));
             Ok(())
         })
         .on_window_event(|window, event| {
