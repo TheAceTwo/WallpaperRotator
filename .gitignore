@@ -1,0 +1,7 @@
+target/
+node_modules/
+*.zip
+.DS_Store
+# never commit real share links
+local-config.json
+/desktop/src-tauri/gen/

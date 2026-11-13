@@ -1,0 +1,73 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Wallpaper Rotator</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <main>
+    <header>
+      <img src="icon.png" alt="" width="40" height="40" />
+      <div>
+        <h1>Wallpaper Rotator</h1>
+        <p class="muted">Random backgrounds from an Immich album</p>
+      </div>
+    </header>
+
+    <section class="card">
+      <label for="shareUrl">Immich share link</label>
+      <div class="row">
+        <input id="shareUrl" type="url" placeholder="https://photos.example.com/share/…" autocomplete="off" spellcheck="false" />
+        <button id="test" type="button" class="secondary">Test</button>
+      </div>
+      <p id="testResult" class="hint">Paste the album link you were sent. It looks like <code>https://…/share/…</code>.</p>
+    </section>
+
+    <section class="card">
+      <label for="interval">Change every</label>
+      <select id="interval">
+        <option value="15">15 minutes</option>
+        <option value="30">30 minutes</option>
+        <option value="60">1 hour</option>
+        <option value="180">3 hours</option>
+        <option value="360">6 hours</option>
+        <option value="720">12 hours</option>
+        <option value="1440">Day</option>
+      </select>
+
+      <label for="orientation">Prefer photos that are</label>
+      <select id="orientation">
+        <option value="landscape">Landscape (best for most screens)</option>
+        <option value="portrait">Portrait</option>
+        <option value="any">Any shape</option>
+      </select>
+
+      <label class="check"><input id="setDesktop" type="checkbox" /> Change the desktop background</label>
+      <div id="lockOptions">
+        <label class="check"><input id="setLockScreen" type="checkbox" /> Change the lock screen</label>
+        <label class="check indent"><input id="separateLockImage" type="checkbox" /> Use a different photo for the lock screen</label>
+      </div>
+      <p id="macLockNote" class="hint" hidden>On macOS the lock screen shows your desktop picture automatically.</p>
+      <label class="check"><input id="autostart" type="checkbox" /> Start when I sign in</label>
+    </section>
+
+    <details class="card">
+      <summary>Advanced</summary>
+      <label class="check"><input id="preferOriginal" type="checkbox" /> Use full-resolution originals when available</label>
+      <div id="policyOption">
+        <label class="check"><input id="allowPolicyLockScreen" type="checkbox" /> If the lock screen won't change, use the system policy (needs “Run as administrator”)</label>
+      </div>
+    </details>
+
+    <section class="actions">
+      <button id="save" type="button">Save</button>
+      <button id="next" type="button" class="secondary">Next wallpaper</button>
+    </section>
+
+    <p id="status" class="status" role="status"></p>
+  </main>
+  <script src="main.js"></script>
+</body>
+</html>
