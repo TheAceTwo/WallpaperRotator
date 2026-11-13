@@ -32,10 +32,13 @@
     <section class="card">
       <label for="interval">Change every</label>
       <select id="interval">
+        <option value="10">10 minutes</option>
         <option value="15">15 minutes</option>
         <option value="30">30 minutes</option>
         <option value="60">1 hour</option>
+        <option value="120">2 hours</option>
         <option value="180">3 hours</option>
+        <option value="240">4 hours</option>
         <option value="360">6 hours</option>
         <option value="720">12 hours</option>
         <option value="1440">Day</option>
@@ -58,6 +61,11 @@
       <button id="next" type="button" class="secondary">Next wallpaper</button>
     </section>
     <p id="status" class="status" role="status"></p>
+
+    <section id="osSettings" class="os-settings" hidden>
+      <span class="muted">Open system settings:</span>
+      <button id="openWallpaper" type="button" class="secondary small">Wallpaper settings</button>
+    </section>
   </main>
   <script type="module" src="options.js"></script>
 </body>

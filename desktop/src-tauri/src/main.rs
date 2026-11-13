@@ -78,6 +78,20 @@ fn get_status(app: AppHandle) -> Status {
     engine(&app).status()
 }
 
+/// System accent color as "#rrggbb", or null if the OS has none.
+#[tauri::command]
+fn accent_color() -> Option<String> {
+    wallsetter::system::accent_color().map(|[r, g, b]| format!("#{r:02x}{g:02x}{b:02x}"))
+}
+
+/// page: "background" or "lockscreen"
+#[tauri::command]
+fn open_wallpaper_settings(page: String) -> Result<(), String> {
+    use wallsetter::system::SettingsPage;
+    let page = if page == "lockscreen" { SettingsPage::LockScreen } else { SettingsPage::Background };
+    wallsetter::system::open_wallpaper_settings(page)
+}
+
 #[tauri::command]
 fn app_version(app: AppHandle) -> String {
     app.package_info().version.to_string()
@@ -215,7 +229,9 @@ fn main() {
             set_autostart,
             app_version,
             check_update,
-            install_update
+            install_update,
+            accent_color,
+            open_wallpaper_settings
         ])
         .setup(|app| {
             // Menu-bar only on macOS (no Dock icon).

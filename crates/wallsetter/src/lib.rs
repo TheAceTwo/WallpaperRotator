@@ -13,6 +13,8 @@ use std::path::Path;
 
 pub type Result<T> = std::result::Result<T, String>;
 
+pub mod system;
+
 #[cfg(windows)]
 mod windows_impl;
 #[cfg(windows)]

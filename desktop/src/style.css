@@ -107,3 +107,15 @@ button.link {
   font-weight: 500;
   font-size: inherit;
 }
+
+.os-settings {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+  margin-top: 16px;
+}
+.os-settings[hidden] { display: none; }
+button.small { padding: 5px 12px; font-size: 13px; }
+
+input[type="checkbox"] { accent-color: var(--accent); }

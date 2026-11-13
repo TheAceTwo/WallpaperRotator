@@ -38,6 +38,7 @@ function send(message) {
 
 async function init() {
   $("notChromeOS").hidden = !!chrome.wallpaper;
+  $("osSettings").hidden = !chrome.wallpaper;
   const s = await getSettings();
   $("shareUrl").value = s.shareUrl;
   const interval = $("interval");
@@ -99,6 +100,12 @@ $("save").addEventListener("click", () => {
 $("next").addEventListener("click", () => {
   msg($("status"), "Fetching a new photo…");
   send({ type: "next" }).catch((e) => msg($("status"), e.message, "err"));
+});
+
+$("openWallpaper").addEventListener("click", () => {
+  chrome.tabs
+    .create({ url: "chrome://personalization/wallpaper" })
+    .catch(() => msg($("status"), "Open the ChromeOS launcher and search for “Wallpaper”.", "err"));
 });
 
 init();
