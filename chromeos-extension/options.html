@@ -1,0 +1,64 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Wallpaper Rotator Options</title>
+  <link rel="stylesheet" href="options.css" />
+</head>
+<body>
+  <main>
+    <header>
+      <img src="icons/icon48.png" alt="" width="40" height="40" />
+      <div>
+        <h1>Wallpaper Rotator</h1>
+        <p class="muted">Random Chromebook wallpapers from an Immich album</p>
+      </div>
+    </header>
+
+    <p id="notChromeOS" class="banner" hidden>
+      This browser isn't running on ChromeOS. Settings will save, but Chrome only allows extensions to change the wallpaper on Chromebooks.
+    </p>
+
+    <section class="card">
+      <label for="shareUrl">Immich share link</label>
+      <div class="row">
+        <input id="shareUrl" type="url" placeholder="https://photos.example.com/share/…" autocomplete="off" spellcheck="false" />
+        <button id="test" type="button" class="secondary">Test</button>
+      </div>
+      <p id="testResult" class="hint">Chrome will ask permission to reach your photo server the first time.</p>
+    </section>
+
+    <section class="card">
+      <label for="interval">Change every</label>
+      <select id="interval">
+        <option value="15">15 minutes</option>
+        <option value="30">30 minutes</option>
+        <option value="60">1 hour</option>
+        <option value="180">3 hours</option>
+        <option value="360">6 hours</option>
+        <option value="720">12 hours</option>
+        <option value="1440">Day</option>
+      </select>
+
+      <label for="orientation">Prefer photos that are</label>
+      <select id="orientation">
+        <option value="landscape">Landscape (best for laptop screens)</option>
+        <option value="portrait">Portrait</option>
+        <option value="any">Any shape</option>
+      </select>
+
+      <label class="check"><input id="preferOriginal" type="checkbox" /> Use full-resolution originals when available</label>
+      <label class="check"><input id="paused" type="checkbox" /> Pause changing</label>
+      <p class="hint">Your Chromebook's lock screen uses the wallpaper, so it changes too.</p>
+    </section>
+
+    <section class="actions">
+      <button id="save" type="button">Save</button>
+      <button id="next" type="button" class="secondary">Next wallpaper</button>
+    </section>
+    <p id="status" class="status" role="status"></p>
+  </main>
+  <script type="module" src="options.js"></script>
+</body>
+</html>

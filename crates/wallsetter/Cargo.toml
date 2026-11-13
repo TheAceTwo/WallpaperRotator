@@ -1,0 +1,24 @@
+[package]
+name = "wallsetter"
+description = "Set desktop and lock screen wallpaper on Windows and macOS"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[target.'cfg(windows)'.dependencies]
+winreg = "0.55"
+windows = { version = "0.61", features = [
+  "Foundation",
+  "Storage",
+  "Storage_Streams",
+  "System_UserProfile",
+  "Win32_Foundation",
+  "Win32_System_Com",
+  "Win32_UI_Shell",
+  "Win32_UI_WindowsAndMessaging",
+] }
+
+[target.'cfg(target_os = "macos")'.dependencies]
+objc2 = "0.6"
+objc2-foundation = { version = "0.3", features = ["NSString", "NSURL", "NSDictionary", "NSArray", "NSThread", "NSError"] }
+objc2-app-kit = { version = "0.3", features = ["NSWorkspace", "NSScreen"] }
