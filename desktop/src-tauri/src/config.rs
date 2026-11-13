@@ -24,6 +24,8 @@ pub struct Config {
     /// Windows: fall back to the machine-wide lock screen policy (needs admin).
     pub allow_policy_lock_screen: bool,
     pub paused: bool,
+    /// Download and install new releases from GitHub automatically.
+    pub auto_update: bool,
 }
 
 impl Default for Config {
@@ -38,6 +40,7 @@ impl Default for Config {
             prefer_original: true,
             allow_policy_lock_screen: false,
             paused: false,
+            auto_update: true,
         }
     }
 }

@@ -26,7 +26,12 @@
   },
   "bundle": {
     "active": true,
-    "targets": ["nsis", "msi", "app", "dmg"],
+    "targets": [
+      "nsis",
+      "msi",
+      "app",
+      "dmg"
+    ],
     "category": "Utility",
     "shortDescription": "Random wallpapers from your Immich album",
     "icon": [
@@ -43,6 +48,18 @@
     "windows": {
       "nsis": {
         "installMode": "currentUser"
+      }
+    },
+    "createUpdaterArtifacts": true
+  },
+  "plugins": {
+    "updater": {
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IENGQTBDMTQ0RjFEQUQyM0QKUldROTB0cnhSTUdnejduZGRkYXUzRlFzTm1xbzFpekMyd3NGRnE2a01sejg1SmhSU0dBSkVvb3UK",
+      "endpoints": [
+        "https://github.com/TheAceTwo/WallpaperRotator/releases/latest/download/latest.json"
+      ],
+      "windows": {
+        "installMode": "passive"
       }
     }
   }

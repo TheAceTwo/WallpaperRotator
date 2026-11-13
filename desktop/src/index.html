@@ -16,6 +16,11 @@
       </div>
     </header>
 
+    <div id="updateBanner" class="banner" hidden>
+      <span id="updateText"></span>
+      <button id="installUpdate" type="button">Install</button>
+    </div>
+
     <section class="card">
       <label for="shareUrl">Immich share link</label>
       <div class="row">
@@ -55,6 +60,7 @@
 
     <details class="card">
       <summary>Advanced</summary>
+      <label class="check"><input id="autoUpdate" type="checkbox" /> Install app updates automatically</label>
       <label class="check"><input id="preferOriginal" type="checkbox" /> Use full-resolution originals when available</label>
       <div id="policyOption">
         <label class="check"><input id="allowPolicyLockScreen" type="checkbox" /> If the lock screen won't change, use the system policy (needs “Run as administrator”)</label>
@@ -67,6 +73,12 @@
     </section>
 
     <p id="status" class="status" role="status"></p>
+
+    <footer>
+      <span id="version"></span>
+      <button id="checkUpdate" type="button" class="link">Check for updates</button>
+      <span id="updateStatus"></span>
+    </footer>
   </main>
   <script src="main.js"></script>
 </body>

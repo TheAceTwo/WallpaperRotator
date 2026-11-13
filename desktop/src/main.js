@@ -2,7 +2,7 @@ const { invoke } = window.__TAURI__.core;
 const { listen } = window.__TAURI__.event;
 
 const $ = (id) => document.getElementById(id);
-const boolFields = ["setDesktop", "setLockScreen", "separateLockImage", "preferOriginal", "allowPolicyLockScreen"];
+const boolFields = ["setDesktop", "setLockScreen", "separateLockImage", "preferOriginal", "allowPolicyLockScreen", "autoUpdate"];
 
 let config = null;
 
@@ -38,6 +38,12 @@ function updateDependents() {
   $("separateLockImage").disabled = !$("setLockScreen").checked;
 }
 
+function showUpdate(info) {
+  $("updateText").textContent = `Version ${info.version} is available.`;
+  $("updateBanner").hidden = false;
+  $("updateStatus").textContent = "";
+}
+
 async function init() {
   const platform = await invoke("platform");
   if (!platform.separateLockScreen) {
@@ -59,7 +65,42 @@ async function init() {
   updateDependents();
   showStatus(await invoke("get_status"));
   listen("status", (e) => showStatus(e.payload));
+
+  $("version").textContent = `Version ${await invoke("app_version")}`;
+  listen("update-available", (e) => showUpdate(e.payload));
+  listen("update-none", () => ($("updateStatus").textContent = "You're up to date."));
+  listen("update-installing", (e) => {
+    $("updateText").textContent = `Installing version ${e.payload}… the app will restart.`;
+    $("updateBanner").hidden = false;
+    $("installUpdate").disabled = true;
+  });
 }
+
+$("checkUpdate").addEventListener("click", async () => {
+  const btn = $("checkUpdate");
+  btn.disabled = true;
+  $("updateStatus").textContent = "Checking…";
+  try {
+    const info = await invoke("check_update");
+    if (info) showUpdate(info);
+    else $("updateStatus").textContent = "You're up to date.";
+  } catch (e) {
+    $("updateStatus").textContent = String(e);
+  } finally {
+    btn.disabled = false;
+  }
+});
+
+$("installUpdate").addEventListener("click", async () => {
+  $("installUpdate").disabled = true;
+  $("updateText").textContent = "Downloading update… the app will restart.";
+  try {
+    await invoke("install_update");
+  } catch (e) {
+    $("updateText").textContent = String(e);
+    $("installUpdate").disabled = false;
+  }
+});
 
 $("setLockScreen").addEventListener("change", updateDependents);
 
