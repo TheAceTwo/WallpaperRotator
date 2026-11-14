@@ -51,6 +51,10 @@
         <option value="any">Any shape</option>
       </select>
 
+      <label for="dim">Dim wallpaper <span id="dimValue" class="muted">Off</span></label>
+      <input id="dim" type="range" min="0" max="80" step="5" value="0" />
+      <p id="dimResult" class="hint">Darkens photos so things on screen are easier to read. Applies right away.</p>
+
       <label class="check"><input id="preferOriginal" type="checkbox" /> Use full-resolution originals when available</label>
       <label class="check"><input id="paused" type="checkbox" /> Pause changing</label>
       <p class="hint">Your Chromebook's lock screen uses the wallpaper, so it changes too.</p>

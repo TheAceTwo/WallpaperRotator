@@ -1,6 +1,7 @@
 // Service worker: schedules and applies wallpapers on ChromeOS.
 import { ImmichClient, parseShareLink, pick } from "./immich.js";
 import { getSettings } from "./settings.js";
+import { prepareImage } from "./image.js";
 
 const ALARM = "rotate";
 const LIST_CACHE_MS = 3 * 60 * 60 * 1000;
@@ -28,52 +29,50 @@ async function getAssets(client, shareUrl) {
   return assets;
 }
 
-/** chrome.wallpaper only accepts JPEG/PNG; convert anything else (e.g. WebP previews). */
-async function toJpegIfNeeded({ bytes, type }) {
-  if (/^image\/(jpeg|jpg|png)\b/.test(type)) return bytes;
-  const bitmap = await createImageBitmap(new Blob([bytes], { type }));
-  const canvas = new OffscreenCanvas(bitmap.width, bitmap.height);
-  canvas.getContext("2d").drawImage(bitmap, 0, 0);
-  const blob = await canvas.convertToBlob({ type: "image/jpeg", quality: 0.92 });
-  return blob.arrayBuffer();
+let queue = Promise.resolve();
+
+/**
+ * Change the wallpaper. With `redim`, re-applies the current photo with the
+ * current dim setting instead of picking a new one.
+ */
+function rotateNow({ redim = false } = {}) {
+  // Run one change at a time (alarm, button press and slider can overlap).
+  const job = queue.then(() => doRotate(redim));
+  queue = job.catch(() => {});
+  return job;
 }
 
-let running = null;
-
-async function rotateNow() {
-  // Collapse overlapping requests (alarm + button press).
-  if (running) return running;
-  running = (async () => {
-    try {
-      if (!chrome.wallpaper) {
-        throw new Error("This device isn't ChromeOS, so Chrome can't change the wallpaper.");
-      }
-      const s = await getSettings();
-      if (!s.shareUrl) throw new Error("Add your Immich share link in the extension options.");
-      const client = new ImmichClient(parseShareLink(s.shareUrl));
-      const assets = await getAssets(client, s.shareUrl);
-
-      const { history = [] } = await chrome.storage.local.get("history");
-      const asset = pick(assets, s.orientation, history);
-      if (!asset) throw new Error("The shared album has no photos.");
-
-      const data = await toJpegIfNeeded(await client.download(asset, s.preferOriginal));
-      await chrome.wallpaper.setWallpaper({ data, layout: "CENTER_CROPPED", filename: "immich-wallpaper" });
-
-      await chrome.storage.local.set({ history });
-      await setStatus({
-        lastChanged: Date.now(),
-        lastError: null,
-        photoCount: assets.filter((a) => a.isImage).length,
-      });
-    } catch (e) {
-      await setStatus({ lastError: String(e.message || e) });
-      throw e;
-    } finally {
-      running = null;
+async function doRotate(redim) {
+  try {
+    if (!chrome.wallpaper) {
+      throw new Error("This device isn't ChromeOS, so Chrome can't change the wallpaper.");
     }
-  })();
-  return running;
+    const s = await getSettings();
+    if (!s.shareUrl) throw new Error("Add your Immich share link in the extension options.");
+    const client = new ImmichClient(parseShareLink(s.shareUrl));
+
+    let asset;
+    if (redim) {
+      ({ currentAsset: asset } = await chrome.storage.local.get("currentAsset"));
+      if (!asset) return; // nothing applied yet; the next photo will use the new setting
+    } else {
+      const assets = await getAssets(client, s.shareUrl);
+      const { history = [] } = await chrome.storage.local.get("history");
+      asset = pick(assets, s.orientation, history);
+      if (!asset) throw new Error("The shared album has no photos.");
+      await chrome.storage.local.set({ history });
+      await setStatus({ photoCount: assets.filter((a) => a.isImage).length });
+    }
+
+    const data = await prepareImage(await client.download(asset, s.preferOriginal), s.dimPercent);
+    await chrome.wallpaper.setWallpaper({ data, layout: "CENTER_CROPPED", filename: "immich-wallpaper" });
+
+    await chrome.storage.local.set({ currentAsset: asset });
+    await setStatus({ lastChanged: Date.now(), lastError: null });
+  } catch (e) {
+    await setStatus({ lastError: String(e.message || e) });
+    throw e;
+  }
 }
 
 chrome.alarms.onAlarm.addListener((a) => {
@@ -101,8 +100,8 @@ chrome.storage.onChanged.addListener(async (changes, area) => {
 });
 
 chrome.runtime.onMessage.addListener((msg, _sender, reply) => {
-  if (msg?.type === "next") {
-    rotateNow().then(
+  if (msg?.type === "next" || msg?.type === "redim") {
+    rotateNow({ redim: msg.type === "redim" }).then(
       () => reply({ ok: true }),
       (e) => reply({ ok: false, error: String(e.message || e) }),
     );

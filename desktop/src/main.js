@@ -31,6 +31,8 @@ function readForm() {
   c.intervalMinutes = Number($("interval").value);
   c.orientation = $("orientation").value;
   for (const f of boolFields) c[f] = $(f).checked;
+  c.dimPercent = Number($("dim").value);
+  c.dimLockScreen = $("dimLockScreen").checked;
   return c;
 }
 
@@ -123,6 +125,10 @@ async function init() {
   interval.value = String(config.intervalMinutes);
   $("orientation").value = config.orientation;
   for (const f of boolFields) $(f).checked = !!config[f];
+  $("dim").value = String(config.dimPercent ?? 0);
+  $("dimLockScreen").checked = config.dimLockScreen ?? true;
+  $("dimLockRow").hidden = !platform.separateLockScreen;
+  showDimValue();
   $("autostart").checked = await invoke("get_autostart");
   updateDependents();
   showStatus(await invoke("get_status"));
@@ -143,6 +149,31 @@ for (const [id, page] of [["openBackground", "background"], ["openLockScreen", "
     invoke("open_wallpaper_settings", { page }).catch((e) => setMsg($("status"), String(e), "err")),
   );
 }
+
+// ---- Dimming: label updates while dragging, applied on release ----
+function showDimValue() {
+  const v = Number($("dim").value);
+  $("dimValue").textContent = v === 0 ? "Off" : `${v}%`;
+}
+
+async function applyDim() {
+  const percent = Number($("dim").value);
+  const lockScreen = $("dimLockScreen").checked;
+  setMsg($("dimResult"), percent ? `Dimming to ${percent}%…` : "Restoring full brightness…");
+  try {
+    await invoke("set_dim", { percent, lockScreen });
+    config = { ...config, dimPercent: percent, dimLockScreen: lockScreen };
+    setMsg($("dimResult"), percent ? `Wallpaper dimmed ${percent}%.` : "Dimming off.", "ok");
+  } catch (e) {
+    // The setting is saved even if there was no wallpaper to re-apply yet.
+    config = { ...config, dimPercent: percent, dimLockScreen: lockScreen };
+    setMsg($("dimResult"), String(e), "err");
+  }
+}
+
+$("dim").addEventListener("input", showDimValue);
+$("dim").addEventListener("change", applyDim);
+$("dimLockScreen").addEventListener("change", applyDim);
 
 $("checkUpdate").addEventListener("click", async () => {
   const btn = $("checkUpdate");

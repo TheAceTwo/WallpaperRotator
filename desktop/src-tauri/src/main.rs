@@ -2,6 +2,7 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod config;
+mod dim;
 mod engine;
 mod updater;
 
@@ -76,6 +77,18 @@ async fn next_wallpaper(app: AppHandle) -> Result<Status, String> {
 #[tauri::command]
 fn get_status(app: AppHandle) -> Status {
     engine(&app).status()
+}
+
+/// Save the dim setting and re-apply the current wallpaper with it.
+#[tauri::command]
+async fn set_dim(app: AppHandle, percent: u8, lock_screen: bool) -> Result<(), String> {
+    let eng = engine(&app);
+    let mut cfg = eng.config();
+    cfg.dim_percent = percent.min(80);
+    cfg.dim_lock_screen = lock_screen;
+    config::save_config(&app, &cfg).map_err(|e| e.to_string())?;
+    *eng.config.lock().unwrap() = cfg;
+    eng.reapply(&app).await
 }
 
 /// System accent color as "#rrggbb", or null if the OS has none.
@@ -231,7 +244,8 @@ fn main() {
             check_update,
             install_update,
             accent_color,
-            open_wallpaper_settings
+            open_wallpaper_settings,
+            set_dim
         ])
         .setup(|app| {
             // Menu-bar only on macOS (no Dock icon).

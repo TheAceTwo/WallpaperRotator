@@ -58,6 +58,10 @@
         <label class="check indent"><input id="separateLockImage" type="checkbox" /> Use a different photo for the lock screen</label>
       </div>
       <p id="macLockNote" class="hint" hidden>On macOS the lock screen shows your desktop picture automatically.</p>
+      <label for="dim">Dim wallpaper <span id="dimValue" class="muted">Off</span></label>
+      <input id="dim" type="range" min="0" max="80" step="5" value="0" />
+      <label id="dimLockRow" class="check indent" hidden><input id="dimLockScreen" type="checkbox" /> Also dim the lock screen</label>
+      <p id="dimResult" class="hint">Darkens photos so desktop icons are easier to read. Applies right away.</p>
       <label class="check"><input id="autostart" type="checkbox" /> Start when I sign in</label>
     </section>
 

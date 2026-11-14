@@ -6,6 +6,7 @@ export const DEFAULTS = {
   orientation: "landscape",
   preferOriginal: true,
   paused: false,
+  dimPercent: 0,
 };
 
 export async function getSettings() {
