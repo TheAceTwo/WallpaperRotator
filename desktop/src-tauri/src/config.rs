@@ -26,6 +26,10 @@ pub struct Config {
     pub paused: bool,
     /// Download and install new releases from GitHub automatically.
     pub auto_update: bool,
+    /// Darken wallpapers by this many percent (0 = off).
+    pub dim_percent: u8,
+    /// Windows: dim the lock screen too.
+    pub dim_lock_screen: bool,
 }
 
 impl Default for Config {
@@ -41,6 +45,8 @@ impl Default for Config {
             allow_policy_lock_screen: false,
             paused: false,
             auto_update: true,
+            dim_percent: 0,
+            dim_lock_screen: true,
         }
     }
 }
@@ -49,6 +55,10 @@ impl Default for Config {
 #[serde(default)]
 pub struct State {
     pub history: History,
+    /// Undimmed copies of the photos currently in use, so dimming can be
+    /// changed without downloading again.
+    pub current_desktop_original: Option<PathBuf>,
+    pub current_lock_original: Option<PathBuf>,
 }
 
 fn config_path(app: &AppHandle) -> PathBuf {

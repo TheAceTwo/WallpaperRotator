@@ -49,6 +49,8 @@ async function init() {
   $("orientation").value = s.orientation;
   $("preferOriginal").checked = s.preferOriginal;
   $("paused").checked = s.paused;
+  $("dim").value = String(s.dimPercent);
+  showDimValue();
   await showStatus();
   chrome.storage.onChanged.addListener((c, area) => area === "local" && c.status && showStatus());
 }
@@ -76,6 +78,7 @@ $("save").addEventListener("click", () => {
     orientation: $("orientation").value,
     preferOriginal: $("preferOriginal").checked,
     paused: $("paused").checked,
+    dimPercent: Number($("dim").value),
   };
   let access = Promise.resolve();
   if (settings.shareUrl) {
@@ -100,6 +103,22 @@ $("save").addEventListener("click", () => {
 $("next").addEventListener("click", () => {
   msg($("status"), "Fetching a new photo…");
   send({ type: "next" }).catch((e) => msg($("status"), e.message, "err"));
+});
+
+function showDimValue() {
+  const v = Number($("dim").value);
+  $("dimValue").textContent = v === 0 ? "Off" : `${v}%`;
+}
+
+$("dim").addEventListener("input", showDimValue);
+$("dim").addEventListener("change", async () => {
+  const dimPercent = Number($("dim").value);
+  await chrome.storage.sync.set({ dimPercent });
+  if (!chrome.wallpaper) return msg($("dimResult"), "Saved.", "ok");
+  msg($("dimResult"), dimPercent ? `Dimming to ${dimPercent}%…` : "Restoring full brightness…");
+  send({ type: "redim" })
+    .then(() => msg($("dimResult"), dimPercent ? `Wallpaper dimmed ${dimPercent}%.` : "Dimming off.", "ok"))
+    .catch((e) => msg($("dimResult"), e.message, "err"));
 });
 
 $("openWallpaper").addEventListener("click", () => {

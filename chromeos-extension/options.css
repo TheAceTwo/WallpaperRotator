@@ -95,3 +95,8 @@ code { font-size: 12px; }
 button.small { padding: 5px 12px; font-size: 13px; }
 
 input[type="checkbox"] { accent-color: var(--accent); }
+
+input[type="range"] { width: 100%; accent-color: var(--accent); margin: 4px 0 0; }
+
+/* `hidden` must win over display rules like label.check { display: flex } */
+[hidden] { display: none !important; }

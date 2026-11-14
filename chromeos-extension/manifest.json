@@ -2,7 +2,7 @@
   "manifest_version": 3,
   "name": "Wallpaper Rotator for Immich",
   "short_name": "Wallpaper Rotator",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "Sets your Chromebook wallpaper (and lock screen) to random photos from an Immich shared album.",
   "minimum_chrome_version": "116",
   "permissions": ["wallpaper", "alarms", "storage"],

@@ -122,15 +122,66 @@ impl Engine {
 
         let dir = config::wallpaper_dir(app);
         std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
-        let stamp = now_secs();
+        let stamp = now_millis();
 
-        let desktop_file = download_to(&client, &desktop_pick, cfg.prefer_original, &dir, "desktop", stamp).await?;
-        let lock_file = match &lock_pick {
+        let desktop_orig =
+            download_to(&client, &desktop_pick, cfg.prefer_original, &dir, "desktop-orig", stamp).await?;
+        let lock_orig = match &lock_pick {
             Some(l) if want_lock && l.id != desktop_pick.id => {
-                Some(download_to(&client, l, cfg.prefer_original, &dir, "lock", stamp).await?)
+                Some(download_to(&client, l, cfg.prefer_original, &dir, "lock-orig", stamp).await?)
             }
-            Some(_) if want_lock => Some(desktop_file.clone()),
+            Some(_) if want_lock => Some(desktop_orig.clone()),
             _ => None,
+        };
+        {
+            let mut st = self.state.lock().unwrap();
+            st.current_desktop_original = Some(desktop_orig.clone());
+            st.current_lock_original = lock_orig.clone();
+        }
+        self.apply_originals(app, &cfg, &dir, desktop_orig, lock_orig, stamp).await
+    }
+
+    /// Re-apply the current photos with the current dim setting (no download).
+    pub async fn reapply(&self, app: &AppHandle) -> Result<(), String> {
+        let _guard = self.busy.lock().await;
+        let cfg = self.config();
+        let (desktop_orig, lock_orig) = {
+            let st = self.state.lock().unwrap();
+            (st.current_desktop_original.clone(), st.current_lock_original.clone())
+        };
+        let desktop_orig = desktop_orig
+            .filter(|p| p.exists())
+            .ok_or("No wallpaper has been set yet. It will be dimmed when the next photo is applied.")?;
+        let want_lock = cfg.set_lock_screen && wallsetter::SUPPORTS_SEPARATE_LOCK_SCREEN;
+        let lock_orig = lock_orig.filter(|p| want_lock && p.exists());
+        let dir = config::wallpaper_dir(app);
+        let result = self.apply_originals(app, &cfg, &dir, desktop_orig, lock_orig, now_millis()).await;
+        if let Err(e) = &result {
+            self.status.lock().unwrap().last_error = Some(e.clone());
+        }
+        let _ = app.emit("status", self.status());
+        result
+    }
+
+    /// Dim (if enabled) and apply the given original files, then tidy up.
+    async fn apply_originals(
+        &self,
+        app: &AppHandle,
+        cfg: &Config,
+        dir: &Path,
+        desktop_orig: PathBuf,
+        lock_orig: Option<PathBuf>,
+        stamp: u64,
+    ) -> Result<(), String> {
+        let desktop_dim = cfg.dim_percent;
+        let lock_dim = if cfg.dim_lock_screen { cfg.dim_percent } else { 0 };
+
+        let desktop_file = dimmed(&desktop_orig, dir, "desktop", stamp, desktop_dim).await?;
+        let lock_file = match lock_orig.clone() {
+            // Same photo and same dimming as the desktop: reuse the file.
+            Some(l) if l == desktop_orig && lock_dim == desktop_dim => Some(desktop_file.clone()),
+            Some(l) => Some(dimmed(&l, dir, "lock", stamp, lock_dim).await?),
+            None => None,
         };
 
         if cfg.set_desktop {
@@ -150,7 +201,7 @@ impl Engine {
             };
         }
 
-        cleanup(&dir, &[Some(desktop_file), lock_file]);
+        cleanup(dir, &[Some(desktop_orig), lock_orig, Some(desktop_file), lock_file]);
         let state = self.state.lock().unwrap().clone();
         let _ = config::save_state(app, &state);
         Ok(())
@@ -215,6 +266,19 @@ async fn apply_desktop(_app: &AppHandle, path: PathBuf) -> Result<(), String> {
     tauri::async_runtime::spawn_blocking(move || wallsetter::set_desktop(&path))
         .await
         .map_err(|e| e.to_string())?
+}
+
+/// Dim `orig` into `<prefix>-<stamp>.jpg` off the async runtime (CPU work).
+async fn dimmed(orig: &Path, dir: &Path, prefix: &str, stamp: u64, percent: u8) -> Result<PathBuf, String> {
+    let (orig, dst) = (orig.to_path_buf(), dir.join(format!("{prefix}-{stamp}.jpg")));
+    tauri::async_runtime::spawn_blocking(move || crate::dim::dim_file(&orig, &dst, percent))
+        .await
+        .map_err(|e| e.to_string())?
+}
+
+/// Used in file names: unique per change even when changes come quickly.
+fn now_millis() -> u64 {
+    SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_millis() as u64).unwrap_or(0)
 }
 
 fn now_secs() -> u64 {
