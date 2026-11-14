@@ -49,6 +49,8 @@ async function init() {
   $("orientation").value = s.orientation;
   $("preferOriginal").checked = s.preferOriginal;
   $("paused").checked = s.paused;
+  $("changeOnStartup").checked = s.changeOnStartup;
+  $("changeOnUnlock").checked = s.changeOnUnlock;
   $("dim").value = String(s.dimPercent);
   showDimValue();
   await showStatus();
@@ -78,6 +80,8 @@ $("save").addEventListener("click", () => {
     orientation: $("orientation").value,
     preferOriginal: $("preferOriginal").checked,
     paused: $("paused").checked,
+    changeOnStartup: $("changeOnStartup").checked,
+    changeOnUnlock: $("changeOnUnlock").checked,
     dimPercent: Number($("dim").value),
   };
   let access = Promise.resolve();

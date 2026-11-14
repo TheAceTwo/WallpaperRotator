@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Wallpaper Rotator</title>
+  <title>Cody's Wallpapers</title>
   <link rel="stylesheet" href="style.css" />
 </head>
 <body>
@@ -11,7 +11,7 @@
     <header>
       <img src="icon.png" alt="" width="40" height="40" />
       <div>
-        <h1>Wallpaper Rotator</h1>
+        <h1>Cody's Wallpapers</h1>
         <p class="muted">Random backgrounds from an Immich album</p>
       </div>
     </header>
@@ -44,6 +44,8 @@
         <option value="720">12 hours</option>
         <option value="1440">Day</option>
       </select>
+      <label class="check"><input id="changeOnStartup" type="checkbox" /> Also change when the computer starts</label>
+      <label class="check"><input id="changeOnUnlock" type="checkbox" /> Also change when I unlock the screen</label>
 
       <label for="orientation">Prefer photos that are</label>
       <select id="orientation">
@@ -90,6 +92,7 @@
     <footer>
       <span id="version"></span>
       <button id="checkUpdate" type="button" class="link">Check for updates</button>
+      <button id="updateNow" type="button" class="small" hidden>Update now</button>
       <span id="updateStatus"></span>
     </footer>
   </main>

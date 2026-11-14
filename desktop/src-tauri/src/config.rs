@@ -30,6 +30,10 @@ pub struct Config {
     pub dim_percent: u8,
     /// Windows: dim the lock screen too.
     pub dim_lock_screen: bool,
+    /// Change the wallpaper on the first launch after the computer starts.
+    pub change_on_startup: bool,
+    /// Change the wallpaper every time the screen is unlocked.
+    pub change_on_unlock: bool,
 }
 
 impl Default for Config {
@@ -47,6 +51,8 @@ impl Default for Config {
             auto_update: true,
             dim_percent: 0,
             dim_lock_screen: true,
+            change_on_startup: true,
+            change_on_unlock: false,
         }
     }
 }
@@ -59,6 +65,12 @@ pub struct State {
     /// changed without downloading again.
     pub current_desktop_original: Option<PathBuf>,
     pub current_lock_original: Option<PathBuf>,
+    /// Photos downloaded ahead of time (see schedule::QUEUE_LEN).
+    pub queue: Vec<crate::schedule::QueuedPhoto>,
+    /// Session start seen at the last launch (detects a fresh start).
+    pub last_session_start: Option<u64>,
+    /// Unix seconds of the last successful change (keeps the timer across restarts).
+    pub last_changed: Option<u64>,
 }
 
 fn config_path(app: &AppHandle) -> PathBuf {

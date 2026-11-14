@@ -2,7 +2,7 @@ const { invoke } = window.__TAURI__.core;
 const { listen } = window.__TAURI__.event;
 
 const $ = (id) => document.getElementById(id);
-const boolFields = ["setDesktop", "setLockScreen", "separateLockImage", "preferOriginal", "allowPolicyLockScreen", "autoUpdate"];
+const boolFields = ["setDesktop", "setLockScreen", "separateLockImage", "preferOriginal", "allowPolicyLockScreen", "autoUpdate", "changeOnStartup", "changeOnUnlock"];
 
 let config = null;
 
@@ -43,8 +43,21 @@ function updateDependents() {
 function showUpdate(info) {
   $("updateText").textContent = `Version ${info.version} is available.`;
   $("updateBanner").hidden = false;
+  $("updateNow").hidden = false;
   $("updateStatus").textContent = "";
 }
+
+// An update may have been found in the background while this window was
+// closed; show it whenever the window is opened or focused.
+async function refreshPendingUpdate() {
+  try {
+    const version = await invoke("pending_update");
+    if (version) showUpdate({ version });
+  } catch {
+    // older backend or no updater: ignore
+  }
+}
+window.addEventListener("focus", refreshPendingUpdate);
 
 // ---- OS accent color ----
 function hexToRgb(hex) {
@@ -101,6 +114,7 @@ window.addEventListener("focus", refreshAccent);
 darkQuery.addEventListener("change", applyAccent);
 
 async function init() {
+  refreshPendingUpdate();
   refreshAccent();
   const platform = await invoke("platform");
   if (platform.os === "windows" || platform.os === "macos") {
@@ -190,16 +204,19 @@ $("checkUpdate").addEventListener("click", async () => {
   }
 });
 
-$("installUpdate").addEventListener("click", async () => {
-  $("installUpdate").disabled = true;
+async function installNow() {
+  $("installUpdate").disabled = $("updateNow").disabled = true;
+  $("updateBanner").hidden = false;
   $("updateText").textContent = "Downloading update… the app will restart.";
   try {
     await invoke("install_update");
   } catch (e) {
     $("updateText").textContent = String(e);
-    $("installUpdate").disabled = false;
+    $("installUpdate").disabled = $("updateNow").disabled = false;
   }
-});
+}
+$("installUpdate").addEventListener("click", installNow);
+$("updateNow").addEventListener("click", installNow);
 
 $("setLockScreen").addEventListener("change", updateDependents);
 
