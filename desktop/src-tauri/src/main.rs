@@ -113,6 +113,14 @@ fn open_wallpaper_settings(page: String) -> Result<(), String> {
     wallsetter::system::open_wallpaper_settings(page)
 }
 
+/// Send the settings window back to the tray (used after 20 idle minutes).
+#[tauri::command]
+fn hide_settings(app: AppHandle) {
+    if let Some(w) = app.get_webview_window("settings") {
+        let _ = w.hide();
+    }
+}
+
 /// Version of an update that was found but not installed yet.
 #[tauri::command]
 fn pending_update(app: AppHandle) -> Option<String> {
@@ -260,7 +268,8 @@ fn main() {
             accent_color,
             open_wallpaper_settings,
             set_dim,
-            pending_update
+            pending_update,
+            hide_settings
         ])
         .setup(|app| {
             // Menu-bar only on macOS (no Dock icon).

@@ -204,7 +204,10 @@ $("checkUpdate").addEventListener("click", async () => {
   }
 });
 
+let installing = false;
+
 async function installNow() {
+  installing = true;
   $("installUpdate").disabled = $("updateNow").disabled = true;
   $("updateBanner").hidden = false;
   $("updateText").textContent = "Downloading update… the app will restart.";
@@ -213,8 +216,24 @@ async function installNow() {
   } catch (e) {
     $("updateText").textContent = String(e);
     $("installUpdate").disabled = $("updateNow").disabled = false;
+    installing = false;
   }
 }
+
+// ---- Close back to the tray after 20 minutes without being used ----
+const IDLE_HIDE_MS = 20 * 60 * 1000;
+let lastActivity = Date.now();
+const markActive = () => (lastActivity = Date.now());
+for (const ev of ["pointermove", "pointerdown", "keydown", "wheel"]) {
+  window.addEventListener(ev, markActive, { passive: true });
+}
+window.addEventListener("focus", markActive);
+
+setInterval(() => {
+  if (installing || Date.now() - lastActivity < IDLE_HIDE_MS) return;
+  markActive(); // the timer starts over when the window is shown again
+  invoke("hide_settings").catch(() => {});
+}, 60 * 1000);
 $("installUpdate").addEventListener("click", installNow);
 $("updateNow").addEventListener("click", installNow);
 
