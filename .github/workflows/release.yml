@@ -18,8 +18,14 @@ jobs:
         include:
           - platform: windows-latest
             args: ""
+            rust_targets: ""
+          # Native Windows on ARM (Snapdragon laptops). MSI doesn't support ARM64, so NSIS only.
+          - platform: windows-latest
+            args: "--target aarch64-pc-windows-msvc --bundles nsis"
+            rust_targets: "aarch64-pc-windows-msvc"
           - platform: macos-latest
             args: "--target universal-apple-darwin"
+            rust_targets: "aarch64-apple-darwin,x86_64-apple-darwin"
     runs-on: ${{ matrix.platform }}
     steps:
       - uses: actions/checkout@v4
@@ -39,8 +45,10 @@ jobs:
           node-version: 22
       - uses: dtolnay/rust-toolchain@stable
         with:
-          targets: ${{ matrix.platform == 'macos-latest' && 'aarch64-apple-darwin,x86_64-apple-darwin' || '' }}
+          targets: ${{ matrix.rust_targets }}
       - uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.rust_targets }}
       - name: Install Tauri CLI
         working-directory: desktop
         run: npm ci
@@ -68,7 +76,8 @@ jobs:
 
             | Your device | Download this | Notes |
             |---|---|---|
-            | **Windows 10/11** | the file ending in `_x64-setup.exe` | If Windows says "Windows protected your PC", click **More info → Run anyway**. |
+            | **Windows 10/11** (most PCs) | the file ending in `_x64-setup.exe` | If Windows says "Windows protected your PC", click **More info → Run anyway**. |
+            | **Windows 11 on ARM** (Snapdragon / Copilot+ laptops) | the file ending in `_arm64-setup.exe` | The x64 file also works on these, just a little slower. Same **More info → Run anyway** step. |
             | **Mac** (Intel or Apple Silicon) | the file ending in `_universal.dmg` | Open it and drag the app to Applications. The first time, go to **System Settings → Privacy & Security → Open Anyway**. |
             | **Chromebook** | `wallpaper-rotator-chromeos.zip` | Unzip it, open `chrome://extensions`, turn on **Developer mode**, click **Load unpacked**, and pick the folder. |
             | **iPhone** | No download | Follow the [iPhone setup guide](https://github.com/${{ github.repository }}/blob/main/ios-shortcut/README.md). |

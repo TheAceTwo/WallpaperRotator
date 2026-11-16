@@ -40,7 +40,8 @@ To cut someone off, delete or regenerate the share link in Immich.
 Download from the [Releases](../../releases) page.
 
 ### Windows
-1. Run the file ending in `_x64-setup.exe`. Windows may show
+1. Run the file ending in `_x64-setup.exe` (or `_arm64-setup.exe` on a
+   Windows-on-ARM laptop such as a Snapdragon / Copilot+ PC). Windows may show
    **"Windows protected your PC"** because the app isn't code-signed: click
    **More info → Run anyway**.
 2. The settings window opens. Paste the album link, click **Test**, then **Save**.
