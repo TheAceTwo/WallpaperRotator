@@ -7,6 +7,8 @@ export const DEFAULTS = {
   preferOriginal: true,
   paused: false,
   dimPercent: 0,
+  changeOnStartup: true,
+  changeOnUnlock: false,
 };
 
 export async function getSettings() {

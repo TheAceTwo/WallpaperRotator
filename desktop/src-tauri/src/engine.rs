@@ -1,6 +1,7 @@
 //! Fetch → pick → download → apply, plus the background schedule.
 
 use crate::config::{self, Config, State};
+use crate::schedule::{self, QueuedPhoto, QUEUE_LEN};
 use immich_core::{Asset, ImmichClient, ShareLink};
 use serde::Serialize;
 use std::path::{Path, PathBuf};
@@ -35,6 +36,8 @@ pub struct Engine {
     cache: Mutex<Option<ListCache>>,
     /// Serialises rotations so the timer and "Next" can't overlap.
     busy: tokio::sync::Mutex<()>,
+    /// Only one cache refill at a time.
+    refilling: tokio::sync::Mutex<()>,
     /// Wakes the scheduler (settings changed / resumed).
     pub wake: Notify,
 }
@@ -47,6 +50,7 @@ impl Engine {
             status: Mutex::new(Status::default()),
             cache: Mutex::new(None),
             busy: tokio::sync::Mutex::new(()),
+            refilling: tokio::sync::Mutex::new(()),
             wake: Notify::new(),
         }
     }
@@ -80,8 +84,10 @@ impl Engine {
 
     /// Change the wallpaper now. Records the outcome in `status`.
     pub async fn rotate(&self, app: &AppHandle) -> Result<(), String> {
-        let _guard = self.busy.lock().await;
-        let result = self.rotate_inner(app).await;
+        let result = {
+            let _guard = self.busy.lock().await;
+            self.rotate_inner(app).await
+        };
         {
             let mut st = self.status.lock().unwrap();
             match &result {
@@ -92,7 +98,18 @@ impl Engine {
                 Err(e) => st.last_error = Some(e.clone()),
             }
         }
+        if result.is_ok() {
+            let state = {
+                let mut st = self.state.lock().unwrap();
+                st.last_changed = Some(now_secs());
+                st.clone()
+            };
+            let _ = config::save_state(app, &state);
+        }
         let _ = app.emit("status", self.status());
+        // Top the cache back up in the background (needs network; may fail).
+        let app2 = app.clone();
+        tauri::async_runtime::spawn(async move { engine(&app2).refill_queue(&app2).await });
         result
     }
 
@@ -101,37 +118,54 @@ impl Engine {
         if cfg.share_url.trim().is_empty() {
             return Err("Add your Immich share link in Settings first.".into());
         }
-        let client = ImmichClient::new(ShareLink::parse(&cfg.share_url).map_err(|e| e.to_string())?)
-            .map_err(|e| e.to_string())?;
-        let assets = self.assets(&client, &cfg.share_url).await?;
-        self.status.lock().unwrap().photo_count = Some(assets.iter().filter(|a| a.is_image).count());
-
-        let want_lock = cfg.set_lock_screen && wallsetter::SUPPORTS_SEPARATE_LOCK_SCREEN;
-        let (desktop_pick, lock_pick) = {
-            let mut st = self.state.lock().unwrap();
-            let mut rng = rand::thread_rng();
-            let d = immich_core::pick(&assets, cfg.orientation, &mut st.history, &mut rng).cloned();
-            let l = if want_lock && cfg.separate_lock_image {
-                immich_core::pick(&assets, cfg.orientation, &mut st.history, &mut rng).cloned()
-            } else {
-                d.clone()
-            };
-            (d, l)
-        };
-        let desktop_pick = desktop_pick.ok_or("The shared album has no photos.")?;
-
         let dir = config::wallpaper_dir(app);
         std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
         let stamp = now_millis();
 
-        let desktop_orig =
-            download_to(&client, &desktop_pick, cfg.prefer_original, &dir, "desktop-orig", stamp).await?;
-        let lock_orig = match &lock_pick {
-            Some(l) if want_lock && l.id != desktop_pick.id => {
-                Some(download_to(&client, l, cfg.prefer_original, &dir, "lock-orig", stamp).await?)
+        let want_lock = cfg.set_lock_screen && wallsetter::SUPPORTS_SEPARATE_LOCK_SCREEN;
+        let need = if want_lock && cfg.separate_lock_image { 2 } else { 1 };
+
+        // 1. Use photos downloaded ahead of time (instant, works offline).
+        let queued = {
+            let mut st = self.state.lock().unwrap();
+            self.prune_locked(&mut st, &cfg);
+            schedule::take(&mut st.queue, need)
+        };
+        let mut originals: Vec<(String, PathBuf)> = Vec::new();
+        for (i, q) in queued.into_iter().enumerate() {
+            // Move it out of the cache folder so normal cleanup manages it.
+            let ext = q.path.extension().and_then(|e| e.to_str()).unwrap_or("jpg").to_string();
+            let dest = dir.join(format!("{}-orig-{stamp}.{ext}", if i == 0 { "desktop" } else { "lock" }));
+            if std::fs::rename(&q.path, &dest).is_ok() {
+                originals.push((q.asset_id, dest));
             }
-            Some(_) if want_lock => Some(desktop_orig.clone()),
-            _ => None,
+        }
+
+        // 2. Download whatever is still missing.
+        if originals.len() < need {
+            let client = self.client(&cfg)?;
+            let assets = self.assets(&client, &cfg.share_url).await?;
+            self.status.lock().unwrap().photo_count = Some(assets.iter().filter(|a| a.is_image).count());
+            while originals.len() < need {
+                let asset = {
+                    let mut st = self.state.lock().unwrap();
+                    immich_core::pick(&assets, cfg.orientation, &mut st.history, &mut rand::thread_rng()).cloned()
+                }
+                .ok_or("The shared album has no photos.")?;
+                let prefix = if originals.is_empty() { "desktop-orig" } else { "lock-orig" };
+                let path = download_to(&client, &asset, cfg.prefer_original, &dir, prefix, stamp).await?;
+                originals.push((asset.id, path));
+            }
+        }
+
+        let desktop_orig = originals[0].1.clone();
+        let lock_orig = if !want_lock {
+            None
+        } else if let Some((id, p)) = originals.get(1) {
+            // Separate lock photo, unless it happens to be the same one.
+            Some(if *id == originals[0].0 { desktop_orig.clone() } else { p.clone() })
+        } else {
+            Some(desktop_orig.clone())
         };
         {
             let mut st = self.state.lock().unwrap();
@@ -139,6 +173,84 @@ impl Engine {
             st.current_lock_original = lock_orig.clone();
         }
         self.apply_originals(app, &cfg, &dir, desktop_orig, lock_orig, stamp).await
+    }
+
+    fn client(&self, cfg: &Config) -> Result<ImmichClient, String> {
+        ImmichClient::new(ShareLink::parse(&cfg.share_url).map_err(|e| e.to_string())?).map_err(|e| e.to_string())
+    }
+
+    /// Drop cached photos that don't match the current settings.
+    fn prune_locked(&self, st: &mut State, cfg: &Config) {
+        for p in schedule::prune_queue(&mut st.queue, &cfg.share_url, cfg.orientation, Path::exists) {
+            let _ = std::fs::remove_file(p);
+        }
+    }
+
+    /// After settings change: drop stale cached photos and download fresh ones.
+    pub fn settings_changed(&self, app: &AppHandle) {
+        let cfg = self.config();
+        let state = {
+            let mut st = self.state.lock().unwrap();
+            self.prune_locked(&mut st, &cfg);
+            st.clone()
+        };
+        let _ = config::save_state(app, &state);
+        let app2 = app.clone();
+        tauri::async_runtime::spawn(async move { engine(&app2).refill_queue(&app2).await });
+    }
+
+    /// Download photos until QUEUE_LEN are waiting. Quietly stops on errors
+    /// (e.g. offline); the next change tries again.
+    pub async fn refill_queue(&self, app: &AppHandle) {
+        let Ok(_guard) = self.refilling.try_lock() else { return };
+        let cfg = self.config();
+        if cfg.share_url.trim().is_empty() {
+            return;
+        }
+        let qdir = config::wallpaper_dir(app).join("queue");
+        if std::fs::create_dir_all(&qdir).is_err() {
+            return;
+        }
+        let Ok(client) = self.client(&cfg) else { return };
+        loop {
+            let missing = {
+                let mut st = self.state.lock().unwrap();
+                self.prune_locked(&mut st, &cfg);
+                QUEUE_LEN.saturating_sub(st.queue.len())
+            };
+            if missing == 0 {
+                break;
+            }
+            let Ok(assets) = self.assets(&client, &cfg.share_url).await else { break };
+            let asset = {
+                let mut st = self.state.lock().unwrap();
+                immich_core::pick(&assets, cfg.orientation, &mut st.history, &mut rand::thread_rng()).cloned()
+            };
+            let Some(asset) = asset else { break };
+            let Ok(path) = download_to(&client, &asset, cfg.prefer_original, &qdir, "q", now_millis()).await else {
+                break;
+            };
+            let state = {
+                let mut st = self.state.lock().unwrap();
+                st.queue.push(QueuedPhoto {
+                    asset_id: asset.id,
+                    path,
+                    share_url: cfg.share_url.clone(),
+                    orientation: cfg.orientation,
+                });
+                st.clone()
+            };
+            let _ = config::save_state(app, &state);
+        }
+        // Remove stray files no longer referenced (e.g. after a crash).
+        let keep: Vec<PathBuf> = self.state.lock().unwrap().queue.iter().map(|q| q.path.clone()).collect();
+        if let Ok(entries) = std::fs::read_dir(&qdir) {
+            for e in entries.flatten() {
+                if !keep.contains(&e.path()) {
+                    let _ = std::fs::remove_file(e.path());
+                }
+            }
+        }
     }
 
     /// Re-apply the current photos with the current dim setting (no download).
@@ -207,18 +319,68 @@ impl Engine {
         Ok(())
     }
 
-    /// Background loop: rotate on start, then every `interval_minutes`.
+    /// Background loop: optional change at startup, then every
+    /// `interval_minutes` measured from the last change (kept across restarts).
     pub async fn run_scheduler(&self, app: AppHandle) {
+        // Was the app just started because the computer started / user signed in?
+        let session = wallsetter::system::session_start_time();
+        let fresh_start = {
+            let mut st = self.state.lock().unwrap();
+            let fresh = schedule::is_new_session(st.last_session_start, session);
+            st.last_session_start = session;
+            fresh
+        };
+        let state = self.state.lock().unwrap().clone();
+        let _ = config::save_state(&app, &state);
+
+        let mut force = fresh_start && self.config().change_on_startup;
+        // Fill the cache even if nothing changes right now.
+        self.settings_changed(&app);
+
         loop {
             let cfg = self.config();
             let ready = !cfg.paused && !cfg.share_url.trim().is_empty();
-            if ready {
+            let last = self.state.lock().unwrap().last_changed;
+            if ready && (force || schedule::secs_until_due(last, cfg.interval_minutes, now_secs()) == 0) {
                 let _ = self.rotate(&app).await;
             }
-            let wait = Duration::from_secs(u64::from(cfg.interval_minutes.max(1)) * 60);
+            force = false;
+            let last = self.state.lock().unwrap().last_changed;
+            // Retry after a minute if a change failed and none has succeeded yet.
+            let wait = schedule::secs_until_due(last, cfg.interval_minutes, now_secs()).max(60);
             tokio::select! {
-                _ = tokio::time::sleep(wait), if ready => {}
-                _ = self.wake.notified() => {}
+                _ = tokio::time::sleep(Duration::from_secs(wait)), if ready => {}
+                // Settings saved / resumed: change now so the user sees the effect.
+                _ = self.wake.notified() => { force = true; }
+            }
+        }
+    }
+
+    /// Watch for the screen being unlocked and change the wallpaper then.
+    pub async fn run_unlock_watcher(&self, app: AppHandle) {
+        const MIN_GAP_SECS: u64 = 60;
+        let mut was_locked = false;
+        loop {
+            tokio::time::sleep(Duration::from_secs(3)).await;
+            let cfg = self.config();
+            if !cfg.change_on_unlock || cfg.paused || cfg.share_url.trim().is_empty() {
+                was_locked = false;
+                continue;
+            }
+            let locked = tauri::async_runtime::spawn_blocking(wallsetter::system::is_screen_locked)
+                .await
+                .ok()
+                .flatten();
+            match locked {
+                Some(true) => was_locked = true,
+                Some(false) if was_locked => {
+                    was_locked = false;
+                    let last = self.state.lock().unwrap().last_changed.unwrap_or(0);
+                    if now_secs().saturating_sub(last) >= MIN_GAP_SECS {
+                        let _ = self.rotate(&app).await;
+                    }
+                }
+                _ => {}
             }
         }
     }

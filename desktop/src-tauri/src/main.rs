@@ -4,7 +4,13 @@
 mod config;
 mod dim;
 mod engine;
+mod schedule;
 mod updater;
+
+/// Shown in the tray, window and OS. Keep in sync with tauri.conf.json productName.
+const APP_NAME: &str = "Cody's Wallpapers";
+/// Name used before the rename; its start-at-sign-in entry is cleaned up.
+const LEGACY_APP_NAME: &str = "Wallpaper Rotator";
 
 use config::Config;
 use engine::{engine, Engine, Status};
@@ -53,6 +59,8 @@ fn save_config(app: AppHandle, config: Config) -> Result<(), String> {
     if link_changed {
         eng.invalidate_cache();
     }
+    // Drop cached photos that no longer fit (other link/orientation) and refill.
+    eng.settings_changed(&app);
     refresh_tray(&app);
     eng.wake.notify_one();
     Ok(())
@@ -103,6 +111,20 @@ fn open_wallpaper_settings(page: String) -> Result<(), String> {
     use wallsetter::system::SettingsPage;
     let page = if page == "lockscreen" { SettingsPage::LockScreen } else { SettingsPage::Background };
     wallsetter::system::open_wallpaper_settings(page)
+}
+
+/// Send the settings window back to the tray (used after 20 idle minutes).
+#[tauri::command]
+fn hide_settings(app: AppHandle) {
+    if let Some(w) = app.get_webview_window("settings") {
+        let _ = w.hide();
+    }
+}
+
+/// Version of an update that was found but not installed yet.
+#[tauri::command]
+fn pending_update(app: AppHandle) -> Option<String> {
+    updater::pending_version(&app)
 }
 
 #[tauri::command]
@@ -178,7 +200,7 @@ fn spawn_rotate(app: &AppHandle) {
 
 fn setup_tray(app: &AppHandle) -> tauri::Result<()> {
     let mut builder = TrayIconBuilder::with_id(TRAY_ID)
-        .tooltip("Wallpaper Rotator")
+        .tooltip(APP_NAME)
         .menu(&build_menu(app)?)
         .show_menu_on_left_click(cfg!(target_os = "macos"))
         .on_menu_event(|app, event| match event.id().as_ref() {
@@ -245,7 +267,9 @@ fn main() {
             install_update,
             accent_color,
             open_wallpaper_settings,
-            set_dim
+            set_dim,
+            pending_update,
+            hide_settings
         ])
         .setup(|app| {
             // Menu-bar only on macOS (no Dock icon).
@@ -263,9 +287,19 @@ fn main() {
                 show_settings(&handle);
             }
 
+            // Renamed from "Wallpaper Rotator": move its start-at-sign-in entry
+            // to the new name so the app neither launches twice nor disappears.
+            if wallsetter::system::remove_legacy_autostart(LEGACY_APP_NAME) {
+                let _ = handle.autolaunch().enable();
+            }
+
             let sched = handle.clone();
             tauri::async_runtime::spawn(async move {
                 engine(&sched).run_scheduler(sched.clone()).await;
+            });
+            let unlock = handle.clone();
+            tauri::async_runtime::spawn(async move {
+                engine(&unlock).run_unlock_watcher(unlock.clone()).await;
             });
             tauri::async_runtime::spawn(updater::run_update_loop(handle.clone()));
             Ok(())

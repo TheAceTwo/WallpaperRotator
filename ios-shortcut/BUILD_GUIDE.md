@@ -36,7 +36,7 @@ done. No Mac, Xcode, developer account, or App Store needed.
 
 ## 1. Create the Shortcut
 
-Open **Shortcuts** → **+**. Name it **Immich Wallpaper**. Add these actions
+Open **Shortcuts** → **+**. Name it **Cody's Wallpapers**. Add these actions
 in order (search the action name in the bottom bar). Text in `monospace` is
 typed exactly. **Blue variable names** are inserted by tapping the field and
 picking the variable or "Select Magic Variable".
@@ -107,7 +107,7 @@ Choose **Always Allow**.
 
 Shortcuts → **Automation** tab → **+** → **Time of Day** → choose a time and
 **Daily** → **Run Immediately** (and turn off "Notify When Run") → pick
-**Immich Wallpaper**.
+**Cody's Wallpapers**.
 
 Add more automations for more changes per day. **When charger is connected**
 and **When I open an app** are fun triggers too.

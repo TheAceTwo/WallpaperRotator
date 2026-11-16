@@ -1,4 +1,4 @@
-# Wallpaper Rotator for Immich
+# Cody's Wallpapers
 
 Sets your desktop and lock screen backgrounds to random photos from a shared
 [Immich](https://immich.app) album, on a schedule. It's built to hand out to
@@ -40,7 +40,8 @@ To cut someone off, delete or regenerate the share link in Immich.
 Download from the [Releases](../../releases) page.
 
 ### Windows
-1. Run `Wallpaper Rotator_x.y.z_x64-setup.exe`. Windows may show
+1. Run the file ending in `_x64-setup.exe` (or `_arm64-setup.exe` on a
+   Windows-on-ARM laptop such as a Snapdragon / Copilot+ PC). Windows may show
    **"Windows protected your PC"** because the app isn't code-signed: click
    **More info → Run anyway**.
 2. The settings window opens. Paste the album link, click **Test**, then **Save**.
@@ -51,7 +52,7 @@ If the lock screen doesn't change: Settings → Personalization → Lock screen 
 set **Personalize your lock screen** to **Picture** (not Windows spotlight).
 
 ### macOS
-1. Open the `.dmg` and drag **Wallpaper Rotator** to Applications.
+1. Open the `.dmg` and drag **Cody's Wallpapers** to Applications.
 2. The first time you open it, macOS says it can't verify the developer. Go
    to **System Settings → Privacy & Security**, scroll down, and click
    **Open Anyway**.

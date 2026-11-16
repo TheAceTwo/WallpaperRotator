@@ -90,7 +90,26 @@ chrome.runtime.onInstalled.addListener(async ({ reason }) => {
 chrome.runtime.onStartup.addListener(async () => {
   await schedule();
   const s = await getSettings();
-  if (s.shareUrl && !s.paused) rotateNow().catch(() => {});
+  if (s.shareUrl && !s.paused && s.changeOnStartup) rotateNow().catch(() => {});
+});
+
+// "Change when I unlock": ChromeOS reports locked -> active when you sign back in.
+// The service worker can be stopped while locked, so remember the state in
+// session storage rather than a variable.
+chrome.idle.onStateChanged.addListener(async (state) => {
+  if (state === "locked") {
+    await chrome.storage.session.set({ wasLocked: true });
+    return;
+  }
+  if (state !== "active") return;
+  const { wasLocked, lastUnlockChange = 0 } = await chrome.storage.session.get(["wasLocked", "lastUnlockChange"]);
+  if (!wasLocked) return;
+  await chrome.storage.session.set({ wasLocked: false });
+  const s = await getSettings();
+  if (!s.shareUrl || s.paused || !s.changeOnUnlock) return;
+  if (Date.now() - lastUnlockChange < 60_000) return;
+  await chrome.storage.session.set({ lastUnlockChange: Date.now() });
+  rotateNow().catch(() => {});
 });
 
 chrome.storage.onChanged.addListener(async (changes, area) => {
