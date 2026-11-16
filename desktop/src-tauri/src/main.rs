@@ -8,7 +8,7 @@ mod schedule;
 mod updater;
 
 /// Shown in the tray, window and OS. Keep in sync with tauri.conf.json productName.
-const APP_NAME: &str = "Cody's Wallpapers";
+const APP_NAME: &str = "Cody’s Wallpapers";
 /// Name used before the rename; its start-at-sign-in entry is cleaned up.
 const LEGACY_APP_NAME: &str = "Wallpaper Rotator";
 

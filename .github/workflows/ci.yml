@@ -20,6 +20,21 @@ jobs:
       - name: ChromeOS extension tests
         run: node --test chromeos-extension/test/immich.test.mjs
 
+  app-name:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Product name must not contain straight quotes
+        # A ' or " in productName breaks the Windows (NSIS) installer script.
+        # Use the typographic apostrophe ’ instead.
+        run: |
+          name=$(jq -r .productName desktop/src-tauri/tauri.conf.json)
+          echo "productName: $name"
+          if printf '%s' "$name" | grep -q "['\"]"; then
+            echo "::error file=desktop/src-tauri/tauri.conf.json::productName contains ' or \" which breaks the Windows installer. Use ’ instead."
+            exit 1
+          fi
+
   build-desktop:
     strategy:
       fail-fast: false

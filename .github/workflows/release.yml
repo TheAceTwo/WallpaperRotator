@@ -69,7 +69,7 @@ jobs:
         with:
           projectPath: desktop
           tagName: ${{ github.ref_type == 'tag' && github.ref_name || 'v__VERSION__' }}
-          releaseName: "Cody's Wallpapers ${{ github.ref_type == 'tag' && github.ref_name || 'v__VERSION__' }}"
+          releaseName: "Cody’s Wallpapers ${{ github.ref_type == 'tag' && github.ref_name || 'v__VERSION__' }}"
           # Write release notes above the download guide when editing the draft.
           releaseBody: |
             ## Which file do I download?

@@ -1,4 +1,4 @@
-# Cody's Wallpapers
+# Cody’s Wallpapers
 
 Sets your desktop and lock screen backgrounds to random photos from a shared
 [Immich](https://immich.app) album, on a schedule. It's built to hand out to
@@ -52,7 +52,7 @@ If the lock screen doesn't change: Settings → Personalization → Lock screen 
 set **Personalize your lock screen** to **Picture** (not Windows spotlight).
 
 ### macOS
-1. Open the `.dmg` and drag **Cody's Wallpapers** to Applications.
+1. Open the `.dmg` and drag **Cody’s Wallpapers** to Applications.
 2. The first time you open it, macOS says it can't verify the developer. Go
    to **System Settings → Privacy & Security**, scroll down, and click
    **Open Anyway**.
