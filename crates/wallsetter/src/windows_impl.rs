@@ -48,6 +48,45 @@ fn set_desktop_com(path: &HSTRING) -> windows::core::Result<()> {
     }
 }
 
+/// Number of active monitors.
+pub fn monitor_count() -> usize {
+    use windows::Win32::UI::WindowsAndMessaging::{GetSystemMetrics, SM_CMONITORS};
+    unsafe { GetSystemMetrics(SM_CMONITORS).max(1) as usize }
+}
+
+/// Set `primary` on the main display and `others` on every other monitor.
+pub fn set_desktop_split(primary: &Path, others: &Path) -> Result<()> {
+    use windows::Win32::System::Com::CoTaskMemFree;
+    let primary = HSTRING::from(primary.as_os_str());
+    let others = HSTRING::from(others.as_os_str());
+    unsafe {
+        let init = CoInitializeEx(None, COINIT_APARTMENTTHREADED);
+        let result = (|| -> windows::core::Result<()> {
+            let dw: IDesktopWallpaper = CoCreateInstance(&DesktopWallpaper, None, CLSCTX_ALL)?;
+            dw.SetPosition(DWPOS_FILL)?;
+            for i in 0..dw.GetMonitorDevicePathCount()? {
+                let id = dw.GetMonitorDevicePathAt(i)?;
+                let monitor = PCWSTR(id.0);
+                // Detached monitors have no rectangle: skip them.
+                if let Ok(rect) = dw.GetMonitorRECT(monitor) {
+                    // The primary display is the one whose top-left is (0, 0).
+                    let path = if rect.left == 0 && rect.top == 0 { &primary } else { &others };
+                    let r = dw.SetWallpaper(monitor, path);
+                    CoTaskMemFree(Some(id.0 as _));
+                    r?;
+                } else {
+                    CoTaskMemFree(Some(id.0 as _));
+                }
+            }
+            Ok(())
+        })();
+        if init.is_ok() {
+            CoUninitialize();
+        }
+        result.map_err(|e| format!("couldn't set per-monitor wallpaper: {e}"))
+    }
+}
+
 fn set_desktop_spi(path: &HSTRING) -> windows::core::Result<()> {
     let mut buf: Vec<u16> = path.iter().copied().chain(std::iter::once(0)).collect();
     unsafe {

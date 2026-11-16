@@ -52,6 +52,7 @@ async function init() {
   $("changeOnStartup").checked = s.changeOnStartup;
   $("changeOnUnlock").checked = s.changeOnUnlock;
   $("dim").value = String(s.dimPercent);
+  $("blur").value = String(s.blurLevel);
   showDimValue();
   await showStatus();
   chrome.storage.onChanged.addListener((c, area) => area === "local" && c.status && showStatus());
@@ -83,6 +84,7 @@ $("save").addEventListener("click", () => {
     changeOnStartup: $("changeOnStartup").checked,
     changeOnUnlock: $("changeOnUnlock").checked,
     dimPercent: Number($("dim").value),
+    blurLevel: Number($("blur").value),
   };
   let access = Promise.resolve();
   if (settings.shareUrl) {
@@ -110,20 +112,27 @@ $("next").addEventListener("click", () => {
 });
 
 function showDimValue() {
-  const v = Number($("dim").value);
-  $("dimValue").textContent = v === 0 ? "Off" : `${v}%`;
+  const d = Number($("dim").value);
+  const b = Number($("blur").value);
+  $("dimValue").textContent = d === 0 ? "Off" : `${d}%`;
+  $("blurValue").textContent = b === 0 ? "Off" : `${b}`;
 }
 
-$("dim").addEventListener("input", showDimValue);
-$("dim").addEventListener("change", async () => {
+async function applyEffects() {
   const dimPercent = Number($("dim").value);
-  await chrome.storage.sync.set({ dimPercent });
+  const blurLevel = Number($("blur").value);
+  await chrome.storage.sync.set({ dimPercent, blurLevel });
   if (!chrome.wallpaper) return msg($("dimResult"), "Saved.", "ok");
-  msg($("dimResult"), dimPercent ? `Dimming to ${dimPercent}%…` : "Restoring full brightness…");
+  msg($("dimResult"), "Updating the wallpaper…");
   send({ type: "redim" })
-    .then(() => msg($("dimResult"), dimPercent ? `Wallpaper dimmed ${dimPercent}%.` : "Dimming off.", "ok"))
+    .then(() => msg($("dimResult"), "Wallpaper updated.", "ok"))
     .catch((e) => msg($("dimResult"), e.message, "err"));
-});
+}
+
+for (const id of ["dim", "blur"]) {
+  $(id).addEventListener("input", showDimValue);
+  $(id).addEventListener("change", applyEffects);
+}
 
 $("openWallpaper").addEventListener("click", () => {
   chrome.tabs

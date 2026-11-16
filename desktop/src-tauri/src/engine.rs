@@ -285,19 +285,28 @@ impl Engine {
         lock_orig: Option<PathBuf>,
         stamp: u64,
     ) -> Result<(), String> {
-        let desktop_dim = cfg.dim_percent;
-        let lock_dim = if cfg.dim_lock_screen { cfg.dim_percent } else { 0 };
+        let main_fx = cfg.main_effects();
+        let other_fx = cfg.other_effects();
+        let lock_fx = cfg.lock_effects();
 
-        let desktop_file = dimmed(&desktop_orig, dir, "desktop", stamp, desktop_dim).await?;
+        let desktop_file = processed(&desktop_orig, dir, "desktop", stamp, main_fx).await?;
+        // Other monitors only need their own file when their effects differ
+        // and there actually is another monitor.
+        let multi = monitor_count(app).await > 1;
+        let other_file = if multi && other_fx != main_fx {
+            processed(&desktop_orig, dir, "other", stamp, other_fx).await?
+        } else {
+            desktop_file.clone()
+        };
         let lock_file = match lock_orig.clone() {
-            // Same photo and same dimming as the desktop: reuse the file.
-            Some(l) if l == desktop_orig && lock_dim == desktop_dim => Some(desktop_file.clone()),
-            Some(l) => Some(dimmed(&l, dir, "lock", stamp, lock_dim).await?),
+            // Same photo and same effects as the desktop: reuse the file.
+            Some(l) if l == desktop_orig && lock_fx == main_fx => Some(desktop_file.clone()),
+            Some(l) => Some(processed(&l, dir, "lock", stamp, lock_fx).await?),
             None => None,
         };
 
         if cfg.set_desktop {
-            apply_desktop(app, desktop_file.clone()).await?;
+            apply_desktop(app, desktop_file.clone(), other_file.clone()).await?;
         }
         if let Some(lock) = lock_file.clone() {
             let allow_policy = cfg.allow_policy_lock_screen;
@@ -313,7 +322,7 @@ impl Engine {
             };
         }
 
-        cleanup(dir, &[Some(desktop_orig), lock_orig, Some(desktop_file), lock_file]);
+        cleanup(dir, &[Some(desktop_orig), lock_orig, Some(desktop_file), Some(other_file), lock_file]);
         let state = self.state.lock().unwrap().clone();
         let _ = config::save_state(app, &state);
         Ok(())
@@ -412,28 +421,58 @@ fn cleanup(dir: &Path, keep: &[Option<PathBuf>]) {
     }
 }
 
+/// Set `main` on the main monitor and `others` on the rest.
 #[cfg(target_os = "macos")]
-async fn apply_desktop(app: &AppHandle, path: PathBuf) -> Result<(), String> {
+async fn apply_desktop(app: &AppHandle, main: PathBuf, others: PathBuf) -> Result<(), String> {
     // AppKit needs the main thread.
     let (tx, rx) = tokio::sync::oneshot::channel();
     app.run_on_main_thread(move || {
-        let _ = tx.send(wallsetter::set_desktop(&path));
+        let _ = tx.send(wallsetter::set_desktop_split(&main, &others));
     })
     .map_err(|e| e.to_string())?;
     rx.await.map_err(|e| e.to_string())?
 }
 
 #[cfg(not(target_os = "macos"))]
-async fn apply_desktop(_app: &AppHandle, path: PathBuf) -> Result<(), String> {
-    tauri::async_runtime::spawn_blocking(move || wallsetter::set_desktop(&path))
-        .await
-        .map_err(|e| e.to_string())?
+async fn apply_desktop(_app: &AppHandle, main: PathBuf, others: PathBuf) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        if main == others {
+            wallsetter::set_desktop(&main)
+        } else {
+            wallsetter::set_desktop_split(&main, &others)
+        }
+    })
+    .await
+    .map_err(|e| e.to_string())?
 }
 
-/// Dim `orig` into `<prefix>-<stamp>.jpg` off the async runtime (CPU work).
-async fn dimmed(orig: &Path, dir: &Path, prefix: &str, stamp: u64, percent: u8) -> Result<PathBuf, String> {
+/// Number of monitors (AppKit needs the main thread on macOS).
+pub async fn monitor_count(app: &AppHandle) -> usize {
+    #[cfg(target_os = "macos")]
+    {
+        let (tx, rx) = tokio::sync::oneshot::channel();
+        if app.run_on_main_thread(move || { let _ = tx.send(wallsetter::monitor_count()); }).is_err() {
+            return 1;
+        }
+        rx.await.unwrap_or(1)
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        let _ = app;
+        wallsetter::monitor_count()
+    }
+}
+
+/// Apply dim/blur to `orig` into `<prefix>-<stamp>.jpg` off the async runtime (CPU work).
+async fn processed(
+    orig: &Path,
+    dir: &Path,
+    prefix: &str,
+    stamp: u64,
+    fx: crate::effects::Effects,
+) -> Result<PathBuf, String> {
     let (orig, dst) = (orig.to_path_buf(), dir.join(format!("{prefix}-{stamp}.jpg")));
-    tauri::async_runtime::spawn_blocking(move || crate::dim::dim_file(&orig, &dst, percent))
+    tauri::async_runtime::spawn_blocking(move || crate::effects::apply_effects(&orig, &dst, fx))
         .await
         .map_err(|e| e.to_string())?
 }

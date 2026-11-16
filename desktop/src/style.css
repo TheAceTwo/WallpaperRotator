@@ -124,3 +124,7 @@ input[type="range"] { width: 100%; accent-color: var(--accent); margin: 4px 0 0;
 
 /* `hidden` must win over display rules like label.check { display: flex } */
 [hidden] { display: none !important; }
+
+.effects { margin-top: 6px; }
+.fx-title { margin: 12px 0 0; font-weight: 600; color: var(--muted); font-size: 12.5px; text-transform: uppercase; letter-spacing: 0.04em; }
+#otherFx { padding-left: 12px; border-left: 2px solid var(--border); margin-top: 6px; }

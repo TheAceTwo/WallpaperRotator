@@ -64,7 +64,7 @@ async function doRotate(redim) {
       await setStatus({ photoCount: assets.filter((a) => a.isImage).length });
     }
 
-    const data = await prepareImage(await client.download(asset, s.preferOriginal), s.dimPercent);
+    const data = await prepareImage(await client.download(asset, s.preferOriginal), s.dimPercent, s.blurLevel);
     await chrome.wallpaper.setWallpaper({ data, layout: "CENTER_CROPPED", filename: "immich-wallpaper" });
 
     await chrome.storage.local.set({ currentAsset: asset });

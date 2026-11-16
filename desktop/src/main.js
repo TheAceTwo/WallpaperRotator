@@ -31,8 +31,7 @@ function readForm() {
   c.intervalMinutes = Number($("interval").value);
   c.orientation = $("orientation").value;
   for (const f of boolFields) c[f] = $(f).checked;
-  c.dimPercent = Number($("dim").value);
-  c.dimLockScreen = $("dimLockScreen").checked;
+  Object.assign(c, readEffects());
   return c;
 }
 
@@ -140,9 +139,13 @@ async function init() {
   $("orientation").value = config.orientation;
   for (const f of boolFields) $(f).checked = !!config[f];
   $("dim").value = String(config.dimPercent ?? 0);
+  $("blur").value = String(config.blurLevel ?? 0);
+  $("separateOtherMonitors").checked = !!config.separateOtherMonitors;
+  $("otherDim").value = String(config.otherDimPercent ?? 0);
+  $("otherBlur").value = String(config.otherBlurLevel ?? 0);
   $("dimLockScreen").checked = config.dimLockScreen ?? true;
   $("dimLockRow").hidden = !platform.separateLockScreen;
-  showDimValue();
+  await refreshMonitors();
   $("autostart").checked = await invoke("get_autostart");
   updateDependents();
   showStatus(await invoke("get_status"));
@@ -164,30 +167,67 @@ for (const [id, page] of [["openBackground", "background"], ["openLockScreen", "
   );
 }
 
-// ---- Dimming: label updates while dragging, applied on release ----
-function showDimValue() {
-  const v = Number($("dim").value);
-  $("dimValue").textContent = v === 0 ? "Off" : `${v}%`;
+// ---- Dim & blur: labels update while dragging, applied on release ----
+const fxSliders = {
+  dim: ["dimValue", (v) => `${v}%`],
+  blur: ["blurValue", (v) => `${v}`],
+  otherDim: ["otherDimValue", (v) => `${v}%`],
+  otherBlur: ["otherBlurValue", (v) => `${v}`],
+};
+
+function showEffectValues() {
+  for (const [id, [labelId, fmt]] of Object.entries(fxSliders)) {
+    const v = Number($(id).value);
+    $(labelId).textContent = v === 0 ? "Off" : fmt(v);
+  }
+  const separate = $("separateOtherMonitors").checked && !$("separateRow").hidden;
+  $("otherFx").hidden = !separate;
+  $("mainFxTitle").hidden = !separate;
 }
 
-async function applyDim() {
-  const percent = Number($("dim").value);
-  const lockScreen = $("dimLockScreen").checked;
-  setMsg($("dimResult"), percent ? `Dimming to ${percent}%…` : "Restoring full brightness…");
+function readEffects() {
+  return {
+    dimPercent: Number($("dim").value),
+    blurLevel: Number($("blur").value),
+    dimLockScreen: $("dimLockScreen").checked,
+    separateOtherMonitors: $("separateOtherMonitors").checked,
+    otherDimPercent: Number($("otherDim").value),
+    otherBlurLevel: Number($("otherBlur").value),
+  };
+}
+
+async function applyEffects() {
+  const effects = readEffects();
+  showEffectValues();
+  setMsg($("dimResult"), "Updating the wallpaper…");
+  // The setting is saved even if there's no wallpaper to re-apply yet.
+  config = { ...config, ...effects };
   try {
-    await invoke("set_dim", { percent, lockScreen });
-    config = { ...config, dimPercent: percent, dimLockScreen: lockScreen };
-    setMsg($("dimResult"), percent ? `Wallpaper dimmed ${percent}%.` : "Dimming off.", "ok");
+    await invoke("set_effects", { effects });
+    setMsg($("dimResult"), "Wallpaper updated.", "ok");
   } catch (e) {
-    // The setting is saved even if there was no wallpaper to re-apply yet.
-    config = { ...config, dimPercent: percent, dimLockScreen: lockScreen };
     setMsg($("dimResult"), String(e), "err");
   }
 }
 
-$("dim").addEventListener("input", showDimValue);
-$("dim").addEventListener("change", applyDim);
-$("dimLockScreen").addEventListener("change", applyDim);
+// Per-monitor options only make sense with more than one monitor.
+async function refreshMonitors() {
+  try {
+    const n = await invoke("monitor_count");
+    $("separateRow").hidden = !(n > 1);
+  } catch {
+    $("separateRow").hidden = true;
+  }
+  showEffectValues();
+}
+window.addEventListener("focus", refreshMonitors);
+
+for (const id of Object.keys(fxSliders)) {
+  $(id).addEventListener("input", showEffectValues);
+  $(id).addEventListener("change", applyEffects);
+}
+$("separateOtherMonitors").addEventListener("change", applyEffects);
+$("dimLockScreen").addEventListener("change", applyEffects);
 
 $("checkUpdate").addEventListener("click", async () => {
   const btn = $("checkUpdate");
