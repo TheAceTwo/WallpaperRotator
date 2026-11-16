@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Cody's Wallpapers</title>
+  <title>Cody’s Wallpapers</title>
   <link rel="stylesheet" href="style.css" />
 </head>
 <body>
@@ -11,7 +11,7 @@
     <header>
       <img src="icon.png" alt="" width="40" height="40" />
       <div>
-        <h1>Cody's Wallpapers</h1>
+        <h1>Cody’s Wallpapers</h1>
         <p class="muted">Random backgrounds from an Immich album</p>
       </div>
     </header>
@@ -46,6 +46,7 @@
       </select>
       <label class="check"><input id="changeOnStartup" type="checkbox" /> Also change when the computer starts</label>
       <label class="check"><input id="changeOnUnlock" type="checkbox" /> Also change when I unlock the screen</label>
+      <label id="fullscreenRow" class="check" hidden><input id="pauseDuringFullscreen" type="checkbox" /> Wait until I'm not playing a game or watching full-screen video</label>
 
       <label for="orientation">Prefer photos that are</label>
       <select id="orientation">
@@ -60,10 +61,25 @@
         <label class="check indent"><input id="separateLockImage" type="checkbox" /> Use a different photo for the lock screen</label>
       </div>
       <p id="macLockNote" class="hint" hidden>On macOS the lock screen shows your desktop picture automatically.</p>
-      <label for="dim">Dim wallpaper <span id="dimValue" class="muted">Off</span></label>
-      <input id="dim" type="range" min="0" max="80" step="5" value="0" />
-      <label id="dimLockRow" class="check indent" hidden><input id="dimLockScreen" type="checkbox" /> Also dim the lock screen</label>
-      <p id="dimResult" class="hint">Darkens photos so desktop icons are easier to read. Applies right away.</p>
+      <div class="effects">
+        <p id="mainFxTitle" class="fx-title" hidden>Main monitor</p>
+        <label for="dim">Dim <span id="dimValue" class="muted">Off</span></label>
+        <input id="dim" type="range" min="0" max="80" step="5" value="0" />
+        <label for="blur">Blur <span id="blurValue" class="muted">Off</span></label>
+        <input id="blur" type="range" min="0" max="10" step="1" value="0" />
+
+        <label id="separateRow" class="check" hidden><input id="separateOtherMonitors" type="checkbox" /> Use different dim &amp; blur on my other monitors</label>
+        <div id="otherFx" hidden>
+          <p class="fx-title">Other monitors</p>
+          <label for="otherDim">Dim <span id="otherDimValue" class="muted">Off</span></label>
+          <input id="otherDim" type="range" min="0" max="80" step="5" value="0" />
+          <label for="otherBlur">Blur <span id="otherBlurValue" class="muted">Off</span></label>
+          <input id="otherBlur" type="range" min="0" max="10" step="1" value="0" />
+        </div>
+
+        <label id="dimLockRow" class="check" hidden><input id="dimLockScreen" type="checkbox" /> Also dim &amp; blur the lock screen (uses the main monitor's settings)</label>
+        <p id="dimResult" class="hint">Darken or soften photos so desktop icons are easier to read. Applies right away.</p>
+      </div>
       <label class="check"><input id="autostart" type="checkbox" /> Start when I sign in</label>
     </section>
 

@@ -7,6 +7,7 @@ export const DEFAULTS = {
   preferOriginal: true,
   paused: false,
   dimPercent: 0,
+  blurLevel: 0,
   changeOnStartup: true,
   changeOnUnlock: false,
 };

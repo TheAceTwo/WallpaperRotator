@@ -205,3 +205,25 @@ pub fn remove_legacy_autostart(old_name: &str) -> bool {
 pub fn remove_legacy_autostart(_old_name: &str) -> bool {
     false
 }
+
+// ---------- full-screen apps (don't interrupt games) ----------
+
+/// True while a full-screen game (exclusive or borderless), full-screen
+/// video, or presentation is running. Uses the same signal Windows uses to
+/// hold back notifications. Always false on other OSes.
+#[cfg(windows)]
+pub fn fullscreen_app_running() -> bool {
+    use windows::Win32::UI::Shell::{
+        SHQueryUserNotificationState, QUNS_BUSY, QUNS_PRESENTATION_MODE, QUNS_RUNNING_D3D_FULL_SCREEN,
+    };
+    // SAFETY: no arguments; returns a plain enum value.
+    match unsafe { SHQueryUserNotificationState() } {
+        Ok(s) => s == QUNS_BUSY || s == QUNS_RUNNING_D3D_FULL_SCREEN || s == QUNS_PRESENTATION_MODE,
+        Err(_) => false,
+    }
+}
+
+#[cfg(not(windows))]
+pub fn fullscreen_app_running() -> bool {
+    false
+}

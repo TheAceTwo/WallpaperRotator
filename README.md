@@ -1,4 +1,4 @@
-# Cody's Wallpapers
+# Cody’s Wallpapers
 
 Sets your desktop and lock screen backgrounds to random photos from a shared
 [Immich](https://immich.app) album, on a schedule. It's built to hand out to
@@ -52,7 +52,7 @@ If the lock screen doesn't change: Settings → Personalization → Lock screen 
 set **Personalize your lock screen** to **Picture** (not Windows spotlight).
 
 ### macOS
-1. Open the `.dmg` and drag **Cody's Wallpapers** to Applications.
+1. Open the `.dmg` and drag **Cody’s Wallpapers** to Applications.
 2. The first time you open it, macOS says it can't verify the developer. Go
    to **System Settings → Privacy & Security**, scroll down, and click
    **Open Anyway**.
@@ -129,7 +129,7 @@ check a release before anyone gets it.
 ### Releasing
 1. Bump `version` in `Cargo.toml` (workspace), `desktop/src-tauri/tauri.conf.json`,
    and `chromeos-extension/manifest.json`.
-2. `git tag v0.2.0 && git push --tags`
+2. Run **Actions → Release → Run workflow** on `main` (releases are built from `main` only; other branches are refused).
 3. GitHub Actions builds the Windows and macOS installers plus the ChromeOS
    zip into a **draft release**. Review it and click Publish.
 

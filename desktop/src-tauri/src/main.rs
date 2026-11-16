@@ -2,13 +2,13 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod config;
-mod dim;
+mod effects;
 mod engine;
 mod schedule;
 mod updater;
 
 /// Shown in the tray, window and OS. Keep in sync with tauri.conf.json productName.
-const APP_NAME: &str = "Cody's Wallpapers";
+const APP_NAME: &str = "Cody’s Wallpapers";
 /// Name used before the rename; its start-at-sign-in entry is cleaned up.
 const LEGACY_APP_NAME: &str = "Wallpaper Rotator";
 
@@ -87,16 +87,38 @@ fn get_status(app: AppHandle) -> Status {
     engine(&app).status()
 }
 
-/// Save the dim setting and re-apply the current wallpaper with it.
+/// Dim/blur settings sent by the settings page.
+#[derive(serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct EffectSettings {
+    dim_percent: u8,
+    blur_level: u8,
+    dim_lock_screen: bool,
+    separate_other_monitors: bool,
+    other_dim_percent: u8,
+    other_blur_level: u8,
+}
+
+/// Save dim/blur settings and re-apply the current wallpaper with them.
 #[tauri::command]
-async fn set_dim(app: AppHandle, percent: u8, lock_screen: bool) -> Result<(), String> {
+async fn set_effects(app: AppHandle, effects: EffectSettings) -> Result<(), String> {
     let eng = engine(&app);
     let mut cfg = eng.config();
-    cfg.dim_percent = percent.min(80);
-    cfg.dim_lock_screen = lock_screen;
+    cfg.dim_percent = effects.dim_percent.min(80);
+    cfg.blur_level = effects.blur_level.min(10);
+    cfg.dim_lock_screen = effects.dim_lock_screen;
+    cfg.separate_other_monitors = effects.separate_other_monitors;
+    cfg.other_dim_percent = effects.other_dim_percent.min(80);
+    cfg.other_blur_level = effects.other_blur_level.min(10);
     config::save_config(&app, &cfg).map_err(|e| e.to_string())?;
     *eng.config.lock().unwrap() = cfg;
     eng.reapply(&app).await
+}
+
+/// How many monitors are connected (decides whether per-monitor options show).
+#[tauri::command]
+async fn monitor_count(app: AppHandle) -> usize {
+    engine::monitor_count(&app).await
 }
 
 /// System accent color as "#rrggbb", or null if the OS has none.
@@ -267,7 +289,8 @@ fn main() {
             install_update,
             accent_color,
             open_wallpaper_settings,
-            set_dim,
+            set_effects,
+            monitor_count,
             pending_update,
             hide_settings
         ])

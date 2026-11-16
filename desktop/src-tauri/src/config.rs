@@ -2,6 +2,7 @@
 //! The share link lives only here, on each user's machine; it is never
 //! compiled into the app.
 
+use crate::effects::Effects;
 use immich_core::{History, Orientation};
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use std::path::{Path, PathBuf};
@@ -28,12 +29,20 @@ pub struct Config {
     pub auto_update: bool,
     /// Darken wallpapers by this many percent (0 = off).
     pub dim_percent: u8,
-    /// Windows: dim the lock screen too.
+    /// Blur strength 0–10 (0 = off).
+    pub blur_level: u8,
+    /// Windows: apply the main dim/blur to the lock screen too.
     pub dim_lock_screen: bool,
+    /// Use separate dim/blur on monitors other than the main one.
+    pub separate_other_monitors: bool,
+    pub other_dim_percent: u8,
+    pub other_blur_level: u8,
     /// Change the wallpaper on the first launch after the computer starts.
     pub change_on_startup: bool,
     /// Change the wallpaper every time the screen is unlocked.
     pub change_on_unlock: bool,
+    /// Windows: hold timed/unlock changes while a full-screen game or app runs.
+    pub pause_during_fullscreen: bool,
 }
 
 impl Default for Config {
@@ -50,9 +59,39 @@ impl Default for Config {
             paused: false,
             auto_update: true,
             dim_percent: 0,
+            blur_level: 0,
             dim_lock_screen: true,
+            separate_other_monitors: false,
+            other_dim_percent: 0,
+            other_blur_level: 0,
             change_on_startup: true,
             change_on_unlock: false,
+            pause_during_fullscreen: true,
+        }
+    }
+}
+
+impl Config {
+    /// Dim/blur for the main monitor.
+    pub fn main_effects(&self) -> Effects {
+        Effects { dim: self.dim_percent, blur: self.blur_level }
+    }
+
+    /// Dim/blur for other monitors (same as main unless set separately).
+    pub fn other_effects(&self) -> Effects {
+        if self.separate_other_monitors {
+            Effects { dim: self.other_dim_percent, blur: self.other_blur_level }
+        } else {
+            self.main_effects()
+        }
+    }
+
+    /// Dim/blur for the lock screen (Windows).
+    pub fn lock_effects(&self) -> Effects {
+        if self.dim_lock_screen {
+            self.main_effects()
+        } else {
+            Effects::default()
         }
     }
 }
