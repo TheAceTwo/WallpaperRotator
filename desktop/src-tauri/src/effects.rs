@@ -26,13 +26,29 @@ impl Effects {
     }
 }
 
+/// Scale factor (≤ 1) that shrinks a `w`×`h` image just enough to still
+/// cover a `tw`×`th` screen (Windows/macOS "fill" crops the rest).
+fn cover_scale(w: u32, h: u32, tw: u32, th: u32) -> f64 {
+    let s = (f64::from(tw) / f64::from(w)).max(f64::from(th) / f64::from(h));
+    s.min(1.0)
+}
+
 /// Write `src` with `fx` applied to `dst` (JPEG) and return the path to use.
 ///
-/// With no effects, returns `src` untouched (no re-encode, no quality loss).
+/// `fit` is the largest screen size (in pixels). Photos much bigger than that
+/// are shrunk to it, so the OS has far less to decode when the wallpaper
+/// changes (that work is what causes a brief stutter, e.g. in games).
+///
+/// With no effects and nothing to shrink, returns `src` untouched.
 /// EXIF orientation is applied first, because the re-encoded file has no
 /// EXIF and phone photos would otherwise appear sideways.
-pub fn apply_effects(src: &Path, dst: &Path, fx: Effects) -> Result<PathBuf, String> {
-    if fx.is_none() {
+pub fn apply_effects(src: &Path, dst: &Path, fx: Effects, fit: Option<(u32, u32)>) -> Result<PathBuf, String> {
+    // Cheap header read; compares pixel counts so EXIF rotation doesn't matter.
+    let too_big = match (fit, image::image_dimensions(src)) {
+        (Some((tw, th)), Ok((w, h))) => u64::from(w) * u64::from(h) > u64::from(tw) * u64::from(th) * 5 / 4,
+        _ => false,
+    };
+    if fx.is_none() && !too_big {
         return Ok(src.to_path_buf());
     }
     let err = |e: &dyn std::fmt::Display| format!("couldn't process the photo: {e}");
@@ -47,10 +63,16 @@ pub fn apply_effects(src: &Path, dst: &Path, fx: Effects) -> Result<PathBuf, Str
     let mut img = DynamicImage::from_decoder(decoder).map_err(|e| err(&e))?;
     img.apply_orientation(orientation);
 
-    if fx.blur > 0 {
-        if img.width().max(img.height()) > BLUR_MAX_EDGE {
-            img = img.resize(BLUR_MAX_EDGE, BLUR_MAX_EDGE, FilterType::Triangle);
+    if let Some((tw, th)) = fit.filter(|_| too_big) {
+        let scale = cover_scale(img.width(), img.height(), tw, th);
+        if scale < 1.0 {
+            let w = ((f64::from(img.width()) * scale).round() as u32).max(1);
+            let h = ((f64::from(img.height()) * scale).round() as u32).max(1);
+            img = img.resize_exact(w, h, FilterType::CatmullRom);
         }
+    }
+    if fx.blur > 0 && img.width().max(img.height()) > BLUR_MAX_EDGE {
+        img = img.resize(BLUR_MAX_EDGE, BLUR_MAX_EDGE, FilterType::Triangle);
     }
     let mut rgb = img.into_rgb8();
     if fx.blur > 0 {
@@ -95,14 +117,14 @@ mod tests {
     fn zero_percent_returns_original() {
         let src = tmp("zero.png");
         solid_png(&src, 4, 4, [200, 100, 50]);
-        assert_eq!(apply_effects(&src, &tmp("zero-out.jpg"), Effects::default()).unwrap(), src);
+        assert_eq!(apply_effects(&src, &tmp("zero-out.jpg"), Effects::default(), None).unwrap(), src);
     }
 
     #[test]
     fn fifty_percent_halves_brightness() {
         let src = tmp("half.png");
         solid_png(&src, 16, 16, [200, 100, 40]);
-        let out = apply_effects(&src, &tmp("half-out.jpg"), Effects { dim: 50, blur: 0 }).unwrap();
+        let out = apply_effects(&src, &tmp("half-out.jpg"), Effects { dim: 50, blur: 0 }, None).unwrap();
         let px = image::open(out).unwrap().into_rgb8().get_pixel(8, 8).0;
         // JPEG is lossy: allow a small tolerance.
         for (got, want) in px.iter().zip([100u8, 50, 20]) {
@@ -118,7 +140,7 @@ mod tests {
         RgbImage::from_fn(1280, 40, |x, _| if x < 640 { Rgb([0, 0, 0]) } else { Rgb([255, 255, 255]) })
             .save(&src)
             .unwrap();
-        let out = apply_effects(&src, &tmp("edge-out.jpg"), Effects { dim: 0, blur: 5 }).unwrap();
+        let out = apply_effects(&src, &tmp("edge-out.jpg"), Effects { dim: 0, blur: 5 }, None).unwrap();
         let img = image::open(out).unwrap().into_rgb8();
         assert_eq!(img.dimensions(), (1280, 40));
         let near_edge = img.get_pixel(636, 20).0[0];
@@ -130,9 +152,34 @@ mod tests {
     fn large_images_are_downscaled_when_blurring() {
         let src = tmp("big.png");
         solid_png(&src, 4000, 3000, [10, 200, 30]);
-        let out = apply_effects(&src, &tmp("big-out.jpg"), Effects { dim: 0, blur: 3 }).unwrap();
+        let out = apply_effects(&src, &tmp("big-out.jpg"), Effects { dim: 0, blur: 3 }, None).unwrap();
         let img = image::open(out).unwrap();
         assert_eq!((img.width(), img.height()), (2560, 1920));
+    }
+
+    #[test]
+    fn shrinks_to_cover_the_screen() {
+        let src = tmp("huge.png");
+        solid_png(&src, 4000, 3000, [90, 90, 90]);
+        // 4000x3000 -> just covers a 1920x1080 screen: 1920x1440.
+        let out = apply_effects(&src, &tmp("huge-out.jpg"), Effects::default(), Some((1920, 1080))).unwrap();
+        let img = image::open(&out).unwrap();
+        assert_eq!((img.width(), img.height()), (1920, 1440));
+        assert_ne!(out, src);
+    }
+
+    #[test]
+    fn screen_sized_photos_are_left_alone() {
+        let src = tmp("fits.png");
+        solid_png(&src, 1920, 1080, [90, 90, 90]);
+        let out = apply_effects(&src, &tmp("fits-out.jpg"), Effects::default(), Some((2560, 1440))).unwrap();
+        assert_eq!(out, src, "no re-encode when nothing to do");
+    }
+
+    #[test]
+    fn cover_scale_math() {
+        assert!((cover_scale(4000, 3000, 1920, 1080) - 0.48).abs() < 1e-9);
+        assert!((cover_scale(1000, 1000, 1920, 1080) - 1.0).abs() < 1e-9, "never upscale");
     }
 
     /// A 8x4 (landscape) JPEG tagged EXIF orientation 6 (rotate 90°) must come
@@ -161,7 +208,7 @@ mod tests {
         let src = tmp("rotated.jpg");
         std::fs::write(&src, tagged).unwrap();
 
-        let out = apply_effects(&src, &tmp("rotated-out.jpg"), Effects { dim: 10, blur: 0 }).unwrap();
+        let out = apply_effects(&src, &tmp("rotated-out.jpg"), Effects { dim: 10, blur: 0 }, None).unwrap();
         let img = image::open(out).unwrap();
         assert_eq!((img.width(), img.height()), (4, 8));
     }

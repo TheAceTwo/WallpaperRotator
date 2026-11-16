@@ -41,6 +41,8 @@ pub struct Config {
     pub change_on_startup: bool,
     /// Change the wallpaper every time the screen is unlocked.
     pub change_on_unlock: bool,
+    /// Windows: hold timed/unlock changes while a full-screen game or app runs.
+    pub pause_during_fullscreen: bool,
 }
 
 impl Default for Config {
@@ -64,6 +66,7 @@ impl Default for Config {
             other_blur_level: 0,
             change_on_startup: true,
             change_on_unlock: false,
+            pause_during_fullscreen: true,
         }
     }
 }

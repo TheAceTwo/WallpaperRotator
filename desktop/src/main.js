@@ -2,7 +2,7 @@ const { invoke } = window.__TAURI__.core;
 const { listen } = window.__TAURI__.event;
 
 const $ = (id) => document.getElementById(id);
-const boolFields = ["setDesktop", "setLockScreen", "separateLockImage", "preferOriginal", "allowPolicyLockScreen", "autoUpdate", "changeOnStartup", "changeOnUnlock"];
+const boolFields = ["setDesktop", "setLockScreen", "separateLockImage", "preferOriginal", "allowPolicyLockScreen", "autoUpdate", "changeOnStartup", "changeOnUnlock", "pauseDuringFullscreen"];
 
 let config = null;
 
@@ -145,6 +145,7 @@ async function init() {
   $("otherBlur").value = String(config.otherBlurLevel ?? 0);
   $("dimLockScreen").checked = config.dimLockScreen ?? true;
   $("dimLockRow").hidden = !platform.separateLockScreen;
+  $("fullscreenRow").hidden = platform.os !== "windows";
   await refreshMonitors();
   $("autostart").checked = await invoke("get_autostart");
   updateDependents();
