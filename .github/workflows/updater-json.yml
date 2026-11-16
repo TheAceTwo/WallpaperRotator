@@ -1,0 +1,40 @@
+# Writes latest.json (the auto-update manifest) for a release and attaches it.
+# Runs automatically at the end of Release; can also be run by hand for an
+# existing release (Actions -> Updater manifest -> Run workflow).
+name: Updater manifest
+
+on:
+  workflow_call:
+    inputs:
+      tag:
+        description: "Release tag, e.g. v0.1.4 (default: version in tauri.conf.json)"
+        type: string
+        required: false
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release tag, e.g. v0.1.4 (default: version in tauri.conf.json)"
+        type: string
+        required: false
+
+permissions:
+  contents: write
+
+jobs:
+  latest-json:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Only from main
+        if: github.ref_type == 'branch' && github.ref != 'refs/heads/main'
+        run: |
+          echo "::error::Run this from main."
+          exit 1
+      - uses: actions/checkout@v4
+      - name: Build and upload latest.json
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ inputs.tag }}
+        run: |
+          if [ -z "$TAG" ]; then TAG="v$(jq -r .version desktop/src-tauri/tauri.conf.json)"; fi
+          python3 .github/scripts/updater_json.py "${{ github.repository }}" "$TAG" latest.json
+          gh release upload "$TAG" latest.json --clobber --repo "${{ github.repository }}"

@@ -92,8 +92,16 @@ jobs:
 
             Already installed? The Windows and Mac apps update themselves.
           releaseDraft: true
-          includeUpdaterJson: true
+          # latest.json is written by the updater-json job below instead: GitHub
+          # renames files containing ’, which stops tauri-action finding them.
+          includeUpdaterJson: false
           args: ${{ matrix.args }}
+
+  updater-json:
+    needs: desktop
+    uses: ./.github/workflows/updater-json.yml
+    with:
+      tag: ${{ github.ref_type == 'tag' && github.ref_name || '' }}
 
   chromeos-extension:
     needs: desktop
