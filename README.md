@@ -129,7 +129,7 @@ check a release before anyone gets it.
 ### Releasing
 1. Bump `version` in `Cargo.toml` (workspace), `desktop/src-tauri/tauri.conf.json`,
    and `chromeos-extension/manifest.json`.
-2. `git tag v0.2.0 && git push --tags`
+2. Run **Actions → Release → Run workflow** on `main` (releases are built from `main` only; other branches are refused).
 3. GitHub Actions builds the Windows and macOS installers plus the ChromeOS
    zip into a **draft release**. Review it and click Publish.
 

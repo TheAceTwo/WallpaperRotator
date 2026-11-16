@@ -28,6 +28,12 @@ jobs:
             rust_targets: "aarch64-apple-darwin,x86_64-apple-darwin"
     runs-on: ${{ matrix.platform }}
     steps:
+      - name: Only release from main
+        if: github.ref_type == 'branch' && github.ref != 'refs/heads/main'
+        shell: bash
+        run: |
+          echo "::error::Releases are built from main only (this run is on ${GITHUB_REF#refs/heads/}). Merge first, then run Release on main."
+          exit 1
       - uses: actions/checkout@v4
       - name: Check updater signing setup
         shell: bash
