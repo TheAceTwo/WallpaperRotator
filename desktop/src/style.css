@@ -29,9 +29,39 @@ body {
   color: var(--text);
   font: 14px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif;
 }
-main { max-width: 520px; margin: 0 auto; padding: 20px 16px 28px; }
-header { display: flex; gap: 12px; align-items: center; margin-bottom: 16px; }
-header img { border-radius: 10px; }
+main { max-width: 520px; margin: 0 auto; padding: 14px 14px 20px; }
+header { display: flex; gap: 10px; align-items: center; margin-bottom: 12px; }
+header img { border-radius: 9px; flex: none; }
+header .title { flex: 1; min-width: 0; }
+header .muted { margin: 0; font-size: 12.5px; }
+.icon-button {
+  flex: none;
+  width: 30px;
+  height: 30px;
+  padding: 0;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--muted);
+  font-size: 15px;
+  line-height: 30px;
+}
+.icon-button:hover { background: var(--card); color: var(--text); }
+.tip {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  justify-content: space-between;
+  font-size: 12.5px;
+  background: var(--card);
+  border: 1px dashed var(--border);
+  border-radius: 10px;
+  padding: 8px 12px;
+  margin-bottom: 12px;
+}
+.tip button { flex: none; }
+/* The flyout is fixed-size; only the page scrolls, never sideways. */
+html, body { overflow-x: hidden; }
 h1 { font-size: 18px; margin: 0; }
 .muted, .hint { color: var(--muted); }
 .hint { font-size: 12.5px; margin: 6px 0 0; }

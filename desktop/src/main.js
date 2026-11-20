@@ -146,6 +146,7 @@ async function init() {
   $("dimLockScreen").checked = config.dimLockScreen ?? true;
   $("dimLockRow").hidden = !platform.separateLockScreen;
   $("fullscreenRow").hidden = platform.os !== "windows";
+  $("trayHint").hidden = platform.os !== "windows" || !!config.trayHintDismissed;
   await refreshMonitors();
   $("autostart").checked = await invoke("get_autostart");
   updateDependents();
@@ -229,6 +230,17 @@ for (const id of Object.keys(fxSliders)) {
 }
 $("separateOtherMonitors").addEventListener("change", applyEffects);
 $("dimLockScreen").addEventListener("change", applyEffects);
+
+$("closeFlyout").addEventListener("click", () => invoke("hide_settings").catch(() => {}));
+$("dismissTrayHint").addEventListener("click", () => {
+  $("trayHint").hidden = true;
+  config = { ...config, trayHintDismissed: true };
+  invoke("dismiss_tray_hint").catch(() => {});
+});
+// Escape closes the flyout, like system flyouts.
+window.addEventListener("keydown", (e) => {
+  if (e.key === "Escape") invoke("hide_settings").catch(() => {});
+});
 
 $("checkUpdate").addEventListener("click", async () => {
   const btn = $("checkUpdate");

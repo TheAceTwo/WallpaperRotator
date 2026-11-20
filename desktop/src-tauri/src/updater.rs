@@ -48,7 +48,11 @@ pub async fn check(app: &AppHandle) -> Result<Option<UpdateInfo>, String> {
 }
 
 /// Download and install the pending update, then relaunch.
+/// True while an update downloads/installs (the flyout stays open to show progress).
+pub static INSTALLING: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
 pub async fn install(app: &AppHandle) -> Result<(), String> {
+    use std::sync::atomic::Ordering;
     let update = app
         .state::<Pending>()
         .0
@@ -57,10 +61,12 @@ pub async fn install(app: &AppHandle) -> Result<(), String> {
         .clone()
         .ok_or("No update is waiting to be installed.")?;
     let _ = app.emit("update-installing", update.version.clone());
-    update
-        .download_and_install(|_chunk, _total| {}, || {})
-        .await
-        .map_err(|e| format!("Update failed: {e}"))?;
+    INSTALLING.store(true, Ordering::SeqCst);
+    let result = update.download_and_install(|_chunk, _total| {}, || {}).await;
+    if let Err(e) = result {
+        INSTALLING.store(false, Ordering::SeqCst);
+        return Err(format!("Update failed: {e}"));
+    }
     // On Windows the installer has already closed the app at this point;
     // on macOS the bundle was replaced in place and we relaunch it.
     app.restart();

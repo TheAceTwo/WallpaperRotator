@@ -45,8 +45,12 @@ Download from the [Releases](../../releases) page.
    **"Windows protected your PC"** because the app isn't code-signed: click
    **More info → Run anyway**.
 2. The settings window opens. Paste the album link, click **Test**, then **Save**.
-3. The app lives in the system tray (^ by the clock). Left-click it for
-   settings; right-click it for **Next wallpaper** / **Pause** / **Quit**.
+3. The app lives in the system tray by the clock. Left-click its icon to open
+   the settings panel (it pops up right above the icon and tucks away when you
+   click elsewhere); right-click it for **Next wallpaper** / **Pause** / **Quit**.
+4. **Keep the icon visible:** Windows puts new icons in the **^** menu. Drag
+   the icon from there onto the taskbar, or go to Settings → Personalization →
+   Taskbar → **Other system tray icons** and turn **Cody’s Wallpapers** on.
 
 If the lock screen doesn't change: Settings → Personalization → Lock screen →
 set **Personalize your lock screen** to **Picture** (not Windows spotlight).
@@ -57,7 +61,8 @@ set **Personalize your lock screen** to **Picture** (not Windows spotlight).
    to **System Settings → Privacy & Security**, scroll down, and click
    **Open Anyway**.
 3. Paste the album link and click **Save**. The app lives in the menu bar
-   (no Dock icon).
+   (no Dock icon): click its icon to drop down the settings panel, or
+   Control-click it for **Next wallpaper** / **Pause** / **Quit**.
 
 ### ChromeOS
 Until it's on the Chrome Web Store:

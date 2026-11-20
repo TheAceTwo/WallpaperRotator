@@ -43,6 +43,8 @@ pub struct Config {
     pub change_on_unlock: bool,
     /// Windows: hold timed/unlock changes while a full-screen game or app runs.
     pub pause_during_fullscreen: bool,
+    /// The "drag my icon out of the ^ menu" tip was dismissed.
+    pub tray_hint_dismissed: bool,
 }
 
 impl Default for Config {
@@ -67,6 +69,7 @@ impl Default for Config {
             change_on_startup: true,
             change_on_unlock: false,
             pause_during_fullscreen: true,
+            tray_hint_dismissed: false,
         }
     }
 }

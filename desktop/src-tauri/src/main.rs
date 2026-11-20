@@ -4,6 +4,7 @@
 mod config;
 mod effects;
 mod engine;
+mod flyout;
 mod schedule;
 mod updater;
 
@@ -18,7 +19,9 @@ use immich_core::{ImmichClient, ShareLink};
 use serde::Serialize;
 use tauri::menu::{CheckMenuItem, Menu, MenuItem, PredefinedMenuItem};
 use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
-use tauri::{AppHandle, Emitter, Manager, WindowEvent, Wry};
+use std::sync::Mutex;
+use std::time::{Duration, Instant};
+use tauri::{AppHandle, Emitter, Manager, PhysicalPosition, PhysicalSize, WebviewWindow, WindowEvent, Wry};
 use tauri_plugin_autostart::{MacosLauncher, ManagerExt};
 
 const TRAY_ID: &str = "main";
@@ -177,12 +180,78 @@ fn set_autostart(app: AppHandle, enabled: bool) -> Result<(), String> {
 
 // ---------- tray ----------
 
+// ---------- tray flyout ----------
+
+/// Flyout size in logical pixels (scaled per monitor).
+const FLYOUT_W: f64 = 400.0;
+const FLYOUT_H: f64 = 680.0;
+
+#[derive(Default)]
+struct FlyoutState {
+    /// Last known tray icon rectangle (physical pixels).
+    icon: Mutex<Option<flyout::Area>>,
+    /// When the flyout last hid itself on losing focus.
+    hidden_at: Mutex<Option<Instant>>,
+}
+
+/// Size and place the flyout next to the tray icon, inside the work area.
+fn position_flyout(app: &AppHandle, w: &WebviewWindow) {
+    let icon = *app.state::<FlyoutState>().icon.lock().unwrap();
+    let monitor = icon
+        .and_then(|i| {
+            app.monitor_from_point(f64::from(i.x) + f64::from(i.w) / 2.0, f64::from(i.y) + f64::from(i.h) / 2.0)
+                .ok()
+                .flatten()
+        })
+        .or_else(|| app.primary_monitor().ok().flatten());
+    let Some(m) = monitor else { return };
+    let wa = m.work_area();
+    let work = flyout::Area { x: wa.position.x, y: wa.position.y, w: wa.size.width, h: wa.size.height };
+    let scale = m.scale_factor();
+    let (win_w, win_h) = ((FLYOUT_W * scale) as u32, (FLYOUT_H * scale) as u32);
+    let (x, y, h) = flyout::place(icon, work, win_w, win_h);
+    let _ = w.set_size(PhysicalSize::new(win_w, h));
+    let _ = w.set_position(PhysicalPosition::new(x, y));
+}
+
 fn show_settings(app: &AppHandle) {
     if let Some(w) = app.get_webview_window("settings") {
+        position_flyout(app, &w);
         let _ = w.show();
         let _ = w.unminimize();
         let _ = w.set_focus();
     }
+}
+
+/// Tray icon left-click: open the flyout, or close it if it's open.
+fn toggle_flyout(app: &AppHandle) {
+    let Some(w) = app.get_webview_window("settings") else { return };
+    if w.is_visible().unwrap_or(false) {
+        let _ = w.hide();
+        return;
+    }
+    // Clicking the icon first takes focus from the open flyout, which hides
+    // it; don't immediately reopen it in that case.
+    let just_hid = app
+        .state::<FlyoutState>()
+        .hidden_at
+        .lock()
+        .unwrap()
+        .is_some_and(|t| t.elapsed() < Duration::from_millis(400));
+    if !just_hid {
+        show_settings(app);
+    }
+}
+
+/// Hide the "drag the icon out of ^" tip for good.
+#[tauri::command]
+fn dismiss_tray_hint(app: AppHandle) -> Result<(), String> {
+    let eng = engine(&app);
+    let mut cfg = eng.config();
+    cfg.tray_hint_dismissed = true;
+    config::save_config(&app, &cfg).map_err(|e| e.to_string())?;
+    *eng.config.lock().unwrap() = cfg;
+    Ok(())
 }
 
 fn build_menu(app: &AppHandle) -> tauri::Result<Menu<Wry>> {
@@ -224,7 +293,8 @@ fn setup_tray(app: &AppHandle) -> tauri::Result<()> {
     let mut builder = TrayIconBuilder::with_id(TRAY_ID)
         .tooltip(APP_NAME)
         .menu(&build_menu(app)?)
-        .show_menu_on_left_click(cfg!(target_os = "macos"))
+        // Left-click opens the flyout; right-click (Control-click on Mac) the menu.
+        .show_menu_on_left_click(false)
         .on_menu_event(|app, event| match event.id().as_ref() {
             "next" => spawn_rotate(app),
             "pause" => {
@@ -255,11 +325,15 @@ fn setup_tray(app: &AppHandle) -> tauri::Result<()> {
             _ => {}
         })
         .on_tray_icon_event(|tray, event| {
-            // Windows: left-click the tray icon to open settings.
-            if let TrayIconEvent::Click { button: MouseButton::Left, button_state: MouseButtonState::Up, .. } = event {
-                if !cfg!(target_os = "macos") {
-                    show_settings(tray.app_handle());
-                }
+            if let TrayIconEvent::Click { rect, button: MouseButton::Left, button_state: MouseButtonState::Up, .. } =
+                event
+            {
+                let app = tray.app_handle();
+                let pos = rect.position.to_physical::<i32>(1.0);
+                let size = rect.size.to_physical::<u32>(1.0);
+                *app.state::<FlyoutState>().icon.lock().unwrap() =
+                    Some(flyout::Area { x: pos.x, y: pos.y, w: size.width, h: size.height });
+                toggle_flyout(app);
             }
         });
     if let Some(icon) = app.default_window_icon() {
@@ -292,7 +366,8 @@ fn main() {
             set_effects,
             monitor_count,
             pending_update,
-            hide_settings
+            hide_settings,
+            dismiss_tray_hint
         ])
         .setup(|app| {
             // Menu-bar only on macOS (no Dock icon).
@@ -302,6 +377,7 @@ fn main() {
             let handle = app.handle().clone();
             app.manage(Engine::new(&handle));
             app.manage(updater::Pending::default());
+            app.manage(FlyoutState::default());
             setup_tray(&handle)?;
 
             // First run (no link yet) or a manual launch: show settings.
@@ -327,15 +403,28 @@ fn main() {
             tauri::async_runtime::spawn(updater::run_update_loop(handle.clone()));
             Ok(())
         })
-        .on_window_event(|window, event| {
+        .on_window_event(|window, event| match event {
             // Closing the settings window keeps the app running in the tray.
-            if let WindowEvent::CloseRequested { api, .. } = event {
+            WindowEvent::CloseRequested { api, .. } => {
                 api.prevent_close();
                 let _ = window.hide();
             }
+            // Like a system flyout: clicking elsewhere tucks it away. Not during
+            // first-time setup (the share link is often copied from a browser)
+            // or while an update installs (so its progress stays visible).
+            WindowEvent::Focused(false) => {
+                let app = window.app_handle();
+                let configured = !engine(app).config().share_url.trim().is_empty();
+                let installing = updater::INSTALLING.load(std::sync::atomic::Ordering::SeqCst);
+                if configured && !installing && window.is_visible().unwrap_or(false) {
+                    let _ = window.hide();
+                    *app.state::<FlyoutState>().hidden_at.lock().unwrap() = Some(Instant::now());
+                }
+            }
+            _ => {}
         })
         .build(tauri::generate_context!())
-        .expect("failed to start Wallpaper Rotator")
+        .expect("failed to start Cody’s Wallpapers")
         .run(|_app, event| {
             // Keep running with no windows open.
             if let tauri::RunEvent::ExitRequested { api, code, .. } = event {
