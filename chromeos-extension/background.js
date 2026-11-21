@@ -1,5 +1,5 @@
 // Service worker: schedules and applies wallpapers on ChromeOS.
-import { ImmichClient, parseShareLink, pick } from "./immich.js";
+import { ImmichClient, linkOrder, parseShareLink, pick, tryLinks } from "./immich.js";
 import { getSettings } from "./settings.js";
 import { prepareImage } from "./image.js";
 
@@ -19,13 +19,21 @@ async function schedule() {
   }
 }
 
-async function getAssets(client, shareUrl) {
+/** Run `fn(client)` on the main link, falling back to the backup link. */
+async function withLinks(s, fn) {
+  const { lastGoodLink } = await chrome.storage.local.get("lastGoodLink");
+  const urls = linkOrder(s.shareUrl, s.useBackupLink ? s.backupShareUrl : "", lastGoodLink);
+  return tryLinks(urls, s.shareUrl.trim(), fn, (url) => chrome.storage.local.set({ lastGoodLink: url }));
+}
+
+async function getAssets(s) {
   const { listCache } = await chrome.storage.local.get("listCache");
-  if (listCache && listCache.shareUrl === shareUrl && Date.now() - listCache.fetched < LIST_CACHE_MS) {
+  if (listCache && listCache.shareUrl === s.shareUrl && Date.now() - listCache.fetched < LIST_CACHE_MS) {
     return listCache.assets;
   }
-  const assets = await client.listAssets();
-  await chrome.storage.local.set({ listCache: { shareUrl, fetched: Date.now(), assets } });
+  // Both links show the same album, so the cache is keyed by the main link.
+  const assets = await withLinks(s, (c) => c.listAssets());
+  await chrome.storage.local.set({ listCache: { shareUrl: s.shareUrl, fetched: Date.now(), assets } });
   return assets;
 }
 
@@ -49,14 +57,13 @@ async function doRotate(redim) {
     }
     const s = await getSettings();
     if (!s.shareUrl) throw new Error("Add your Immich share link in the extension options.");
-    const client = new ImmichClient(parseShareLink(s.shareUrl));
 
     let asset;
     if (redim) {
       ({ currentAsset: asset } = await chrome.storage.local.get("currentAsset"));
       if (!asset) return; // nothing applied yet; the next photo will use the new setting
     } else {
-      const assets = await getAssets(client, s.shareUrl);
+      const assets = await getAssets(s);
       const { history = [] } = await chrome.storage.local.get("history");
       asset = pick(assets, s.orientation, history);
       if (!asset) throw new Error("The shared album has no photos.");
@@ -64,7 +71,8 @@ async function doRotate(redim) {
       await setStatus({ photoCount: assets.filter((a) => a.isImage).length });
     }
 
-    const data = await prepareImage(await client.download(asset, s.preferOriginal), s.dimPercent, s.blurLevel);
+    const image = await withLinks(s, (c) => c.download(asset, s.preferOriginal));
+    const data = await prepareImage(image, s.dimPercent, s.blurLevel);
     await chrome.wallpaper.setWallpaper({ data, layout: "CENTER_CROPPED", filename: "immich-wallpaper" });
 
     await chrome.storage.local.set({ currentAsset: asset });

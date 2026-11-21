@@ -62,6 +62,19 @@ pub fn secs_until_due(last_changed: Option<u64>, interval_minutes: u32, now: u64
     }
 }
 
+/// Links to try, in order: the main link, then the backup (if enabled and
+/// different), except that whichever worked last time goes first.
+pub fn link_order(main: &str, backup: Option<&str>, last_good: Option<&str>) -> Vec<String> {
+    let mut urls = vec![main.trim().to_string()];
+    if let Some(b) = backup.map(str::trim).filter(|b| !b.is_empty() && *b != urls[0]) {
+        urls.push(b.to_string());
+    }
+    if let Some(i) = last_good.and_then(|g| urls.iter().position(|u| u == g)) {
+        urls.swap(0, i);
+    }
+    urls
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -90,6 +103,17 @@ mod tests {
         assert_eq!(take(&mut queue, 1)[0].asset_id, "a");
         assert_eq!(take(&mut queue, 5).len(), 1);
         assert!(take(&mut queue, 1).is_empty());
+    }
+
+    #[test]
+    fn link_order_rules() {
+        let (m, b) = ("https://public/share/k", "http://100.64.0.5:2283/share/k");
+        assert_eq!(link_order(m, None, None), [m]);
+        assert_eq!(link_order(m, Some(b), None), [m, b], "main first by default");
+        assert_eq!(link_order(m, Some(b), Some(b)), [b, m], "last working link first");
+        assert_eq!(link_order(m, Some("  "), None), [m], "empty backup ignored");
+        assert_eq!(link_order(m, Some(m), None), [m], "same link not tried twice");
+        assert_eq!(link_order(m, None, Some(b)), [m], "backup turned off");
     }
 
     #[test]

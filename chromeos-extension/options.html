@@ -27,6 +27,14 @@
         <button id="test" type="button" class="secondary">Test</button>
       </div>
       <p id="testResult" class="hint">Chrome will ask permission to reach your photo server the first time.</p>
+      <div id="backupLinkRow" hidden>
+        <label for="backupShareUrl">Backup link</label>
+        <div class="row">
+          <input id="backupShareUrl" type="url" placeholder="http://100.x.x.x:2283/share/…" autocomplete="off" spellcheck="false" />
+          <button id="testBackup" type="button" class="secondary">Test</button>
+        </div>
+        <p id="testBackupResult" class="hint">Used when the link above can't be reached, e.g. a Tailscale or home address for the same album.</p>
+      </div>
     </section>
 
     <section class="card">
@@ -63,6 +71,11 @@
       <label class="check"><input id="paused" type="checkbox" /> Pause changing</label>
       <p class="hint">Your Chromebook's lock screen uses the wallpaper, so it changes too.</p>
     </section>
+
+    <details class="card">
+      <summary>Advanced</summary>
+      <label class="check"><input id="useBackupLink" type="checkbox" /> Use a backup link if the main one can't be reached</label>
+    </details>
 
     <section class="actions">
       <button id="save" type="button">Save</button>

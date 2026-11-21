@@ -2,7 +2,7 @@ const { invoke } = window.__TAURI__.core;
 const { listen } = window.__TAURI__.event;
 
 const $ = (id) => document.getElementById(id);
-const boolFields = ["setDesktop", "setLockScreen", "separateLockImage", "preferOriginal", "allowPolicyLockScreen", "autoUpdate", "changeOnStartup", "changeOnUnlock", "pauseDuringFullscreen"];
+const boolFields = ["setDesktop", "setLockScreen", "separateLockImage", "preferOriginal", "allowPolicyLockScreen", "autoUpdate", "changeOnStartup", "changeOnUnlock", "pauseDuringFullscreen", "useBackupLink"];
 
 let config = null;
 
@@ -28,6 +28,7 @@ function showStatus(s) {
 function readForm() {
   const c = { ...config };
   c.shareUrl = $("shareUrl").value.trim();
+  c.backupShareUrl = $("backupShareUrl").value.trim();
   c.intervalMinutes = Number($("interval").value);
   c.orientation = $("orientation").value;
   for (const f of boolFields) c[f] = $(f).checked;
@@ -131,6 +132,7 @@ async function init() {
 
   config = await invoke("get_config");
   $("shareUrl").value = config.shareUrl;
+  $("backupShareUrl").value = config.backupShareUrl ?? "";
   const interval = $("interval");
   if (![...interval.options].some((o) => Number(o.value) === config.intervalMinutes)) {
     interval.add(new Option(`${config.intervalMinutes} minutes`, config.intervalMinutes));
@@ -138,6 +140,7 @@ async function init() {
   interval.value = String(config.intervalMinutes);
   $("orientation").value = config.orientation;
   for (const f of boolFields) $(f).checked = !!config[f];
+  showBackupRow();
   $("dim").value = String(config.dimPercent ?? 0);
   $("blur").value = String(config.blurLevel ?? 0);
   $("separateOtherMonitors").checked = !!config.separateOtherMonitors;
@@ -292,18 +295,29 @@ $("updateNow").addEventListener("click", installNow);
 
 $("setLockScreen").addEventListener("change", updateDependents);
 
-$("test").addEventListener("click", async () => {
-  const btn = $("test");
+// The backup link field only shows while the Advanced option is on.
+function showBackupRow() {
+  $("backupLinkRow").hidden = !$("useBackupLink").checked;
+}
+$("useBackupLink").addEventListener("change", showBackupRow);
+
+async function testLink(inputId, buttonId, resultId) {
+  const btn = $(buttonId);
   btn.disabled = true;
-  setMsg($("testResult"), "Checking…");
+  setMsg($(resultId), "Checking…");
   try {
-    const n = await invoke("test_link", { shareUrl: $("shareUrl").value.trim() });
-    setMsg($("testResult"), `Connected: ${n} photos found.`, "ok");
+    const n = await invoke("test_link", { shareUrl: $(inputId).value.trim() });
+    setMsg($(resultId), `Connected: ${n} photos found.`, "ok");
   } catch (e) {
-    setMsg($("testResult"), String(e), "err");
+    setMsg($(resultId), String(e), "err");
   } finally {
     btn.disabled = false;
   }
+}
+$("testBackup").addEventListener("click", () => testLink("backupShareUrl", "testBackup", "testBackupResult"));
+
+$("test").addEventListener("click", async () => {
+  await testLink("shareUrl", "test", "testResult");
 });
 
 $("save").addEventListener("click", async () => {

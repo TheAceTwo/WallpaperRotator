@@ -53,11 +53,17 @@ fn save_config(app: AppHandle, config: Config) -> Result<(), String> {
     if !config.share_url.trim().is_empty() {
         ShareLink::parse(&config.share_url).map_err(|e| e.to_string())?;
     }
+    if config.use_backup_link && !config.backup_share_url.trim().is_empty() {
+        ShareLink::parse(&config.backup_share_url).map_err(|e| format!("Backup link: {e}"))?;
+    }
     let mut config = config;
     config.interval_minutes = config.interval_minutes.clamp(1, 7 * 24 * 60);
     config::save_config(&app, &config).map_err(|e| e.to_string())?;
     let eng = engine(&app);
-    let link_changed = eng.config().share_url != config.share_url;
+    let old = eng.config();
+    let link_changed = old.share_url != config.share_url
+        || old.backup_share_url != config.backup_share_url
+        || old.use_backup_link != config.use_backup_link;
     *eng.config.lock().unwrap() = config;
     if link_changed {
         eng.invalidate_cache();

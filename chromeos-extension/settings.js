@@ -2,6 +2,8 @@
 // The share link is entered by each user; nothing is baked into the extension.
 export const DEFAULTS = {
   shareUrl: "",
+  useBackupLink: false,
+  backupShareUrl: "",
   intervalMinutes: 60,
   orientation: "landscape",
   preferOriginal: true,

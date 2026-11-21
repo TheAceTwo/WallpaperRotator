@@ -22,9 +22,9 @@ async function showStatus() {
  * Ask for access to the user's server. Must be called synchronously inside a
  * click handler (before any await) so Chrome treats it as a user gesture.
  */
-function requestHostAccess(shareUrl) {
-  const { server } = parseShareLink(shareUrl);
-  return chrome.permissions.request({ origins: [`${server}/*`] }).then((granted) => {
+function requestHostAccess(...shareUrls) {
+  const origins = shareUrls.filter(Boolean).map((u) => `${parseShareLink(u).server}/*`);
+  return chrome.permissions.request({ origins }).then((granted) => {
     if (!granted) throw new Error("Chrome needs permission to reach your photo server.");
   });
 }
@@ -41,6 +41,9 @@ async function init() {
   $("osSettings").hidden = !chrome.wallpaper;
   const s = await getSettings();
   $("shareUrl").value = s.shareUrl;
+  $("backupShareUrl").value = s.backupShareUrl;
+  $("useBackupLink").checked = s.useBackupLink;
+  showBackupRow();
   const interval = $("interval");
   if (![...interval.options].some((o) => Number(o.value) === s.intervalMinutes)) {
     interval.add(new Option(`${s.intervalMinutes} minutes`, s.intervalMinutes));
@@ -58,25 +61,34 @@ async function init() {
   chrome.storage.onChanged.addListener((c, area) => area === "local" && c.status && showStatus());
 }
 
-$("test").addEventListener("click", () => {
-  const url = $("shareUrl").value.trim();
+function showBackupRow() {
+  $("backupLinkRow").hidden = !$("useBackupLink").checked;
+}
+$("useBackupLink").addEventListener("change", showBackupRow);
+
+function testLink(inputId, resultId) {
+  const url = $(inputId).value.trim();
   let access;
   try {
     access = requestHostAccess(url);
   } catch (e) {
-    return msg($("testResult"), e.message, "err");
+    return msg($(resultId), e.message, "err");
   }
-  msg($("testResult"), "Checking…");
+  msg($(resultId), "Checking…");
   access
     .then(() => send({ type: "test", shareUrl: url }))
-    .then((r) => msg($("testResult"), `Connected: ${r.count} photos found.`, "ok"))
-    .catch((e) => msg($("testResult"), e.message, "err"));
-});
+    .then((r) => msg($(resultId), `Connected: ${r.count} photos found.`, "ok"))
+    .catch((e) => msg($(resultId), e.message, "err"));
+}
+$("test").addEventListener("click", () => testLink("shareUrl", "testResult"));
+$("testBackup").addEventListener("click", () => testLink("backupShareUrl", "testBackupResult"));
 
 $("save").addEventListener("click", () => {
   const settings = {
     ...DEFAULTS,
     shareUrl: $("shareUrl").value.trim(),
+    useBackupLink: $("useBackupLink").checked,
+    backupShareUrl: $("backupShareUrl").value.trim(),
     intervalMinutes: Number($("interval").value),
     orientation: $("orientation").value,
     preferOriginal: $("preferOriginal").checked,
@@ -89,7 +101,7 @@ $("save").addEventListener("click", () => {
   let access = Promise.resolve();
   if (settings.shareUrl) {
     try {
-      access = requestHostAccess(settings.shareUrl);
+      access = requestHostAccess(settings.shareUrl, settings.useBackupLink && settings.backupShareUrl);
     } catch (e) {
       return msg($("status"), e.message, "err");
     }

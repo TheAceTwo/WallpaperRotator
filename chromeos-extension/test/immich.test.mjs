@@ -1,7 +1,7 @@
 // Run: node --test chromeos-extension/test/
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { ImmichClient, UnauthorizedError, parseShareLink, pick } from "../immich.js";
+import { ImmichClient, UnauthorizedError, linkOrder, parseShareLink, pick, tryLinks } from "../immich.js";
 
 /** Fake fetch routing on pathname (+ optional query predicate). */
 function fakeFetch(routes) {
@@ -78,4 +78,36 @@ test("pick avoids recent repeats and honors orientation", () => {
     assert.equal(new Set(seq.slice(i, i + 6)).size, 6);
   }
   assert.equal(pick([], "any", []), null);
+});
+
+test("linkOrder: main first, backup second, last working link first", () => {
+  const m = "https://public.example.com/share/k1";
+  const b = "http://100.64.0.5:2283/share/k1";
+  assert.deepEqual(linkOrder(m, ""), [m]);
+  assert.deepEqual(linkOrder(m, b), [m, b]);
+  assert.deepEqual(linkOrder(m, b, b), [b, m]);
+  assert.deepEqual(linkOrder(m, m), [m]);
+});
+
+test("tryLinks falls back to the backup when the main link can't be reached", async () => {
+  const m = "https://public.example.com/share/k1";
+  const b = "http://100.64.0.5:2283/share/k1";
+  // Main server unreachable (fetch rejects, like a DNS/connection failure); backup works.
+  const fetchFor = (url) =>
+    url.startsWith("https://public") ? Promise.reject(new TypeError("Failed to fetch")) : fakeFetch([["/api/shared-links/me", any, 200, { assets: [{ id: "x", type: "IMAGE" }] }]])(url);
+  let used = null;
+  const assets = await tryLinks([m, b], m, (c) => c.listAssets(), (u) => { used = u; },
+    (u) => new ImmichClient(parseShareLink(u), fetchFor));
+  assert.equal(used, b);
+  assert.deepEqual(assets.map((a) => a.id), ["x"]);
+});
+
+test("tryLinks names both links when neither works", async () => {
+  const m = "https://a.example.com/share/k1";
+  const b = "https://b.example.com/share/k1";
+  const down = () => Promise.reject(new TypeError("Failed to fetch"));
+  await assert.rejects(
+    tryLinks([m, b], m, (c) => c.listAssets(), undefined, (u) => new ImmichClient(parseShareLink(u), down)),
+    /Main link: Failed to fetch · Backup link: Failed to fetch/,
+  );
 });

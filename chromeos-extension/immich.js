@@ -140,6 +140,39 @@ export class ImmichClient {
   }
 }
 
+/**
+ * Links to try, in order: main, then backup (if set and different), except
+ * that whichever worked last time goes first.
+ */
+export function linkOrder(main, backup, lastGood) {
+  const urls = [String(main || "").trim()];
+  const b = String(backup || "").trim();
+  if (b && b !== urls[0]) urls.push(b);
+  const i = lastGood ? urls.indexOf(lastGood) : -1;
+  if (i > 0) [urls[0], urls[i]] = [urls[i], urls[0]];
+  return urls;
+}
+
+/**
+ * Run `fn(client)` against each link until one succeeds. Calls
+ * `onSuccess(url)` with the link that worked; if all fail, throws one error
+ * naming each link's problem.
+ */
+export async function tryLinks(urls, main, fn, onSuccess = () => {}, makeClient = (u) => new ImmichClient(parseShareLink(u))) {
+  const errors = [];
+  for (const url of urls) {
+    try {
+      const result = await fn(makeClient(url));
+      await onSuccess(url);
+      return result;
+    } catch (e) {
+      errors.push([url, String(e.message || e)]);
+    }
+  }
+  if (errors.length === 1) throw new Error(errors[0][1]);
+  throw new Error(errors.map(([u, m]) => `${u === main ? "Main link" : "Backup link"}: ${m}`).join(" · "));
+}
+
 export function matchesOrientation(a, orientation) {
   if (orientation === "any" || a.ratio == null) return true;
   return orientation === "landscape" ? a.ratio >= 1 : a.ratio <= 1;

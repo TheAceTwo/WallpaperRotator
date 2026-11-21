@@ -34,6 +34,8 @@ pub struct Engine {
     state: Mutex<State>,
     status: Mutex<Status>,
     cache: Mutex<Option<ListCache>>,
+    /// The link (main or backup) that worked most recently; tried first.
+    last_good_link: Mutex<Option<String>>,
     /// Serialises rotations so the timer and "Next" can't overlap.
     busy: tokio::sync::Mutex<()>,
     /// Only one cache refill at a time.
@@ -49,6 +51,7 @@ impl Engine {
             state: Mutex::new(config::load_state(app)),
             status: Mutex::new(Status::default()),
             cache: Mutex::new(None),
+            last_good_link: Mutex::new(None),
             busy: tokio::sync::Mutex::new(()),
             refilling: tokio::sync::Mutex::new(()),
             wake: Notify::new(),
@@ -67,19 +70,82 @@ impl Engine {
         *self.cache.lock().unwrap() = None;
     }
 
-    async fn assets(&self, client: &ImmichClient, share_url: &str) -> Result<Vec<Asset>, String> {
+    /// The share link and, if enabled, the backup link, with whichever
+    /// worked last time first (so a link that's unreachable on this network
+    /// doesn't make every change wait for it to time out).
+    fn links(&self, cfg: &Config) -> Result<Vec<(String, ImmichClient)>, String> {
+        let last_good = self.last_good_link.lock().unwrap().clone();
+        let backup = cfg.use_backup_link.then_some(cfg.backup_share_url.as_str());
+        schedule::link_order(&cfg.share_url, backup, last_good.as_deref())
+            .into_iter()
+            .map(|u| {
+                let link = ShareLink::parse(&u).map_err(|e| e.to_string())?;
+                Ok((u, ImmichClient::new(link).map_err(|e| e.to_string())?))
+            })
+            .collect()
+    }
+
+    /// Combine per-link errors into one readable message.
+    fn link_errors(cfg: &Config, errors: Vec<(String, String)>) -> String {
+        if errors.len() == 1 {
+            return errors.into_iter().next().map(|(_, e)| e).unwrap_or_default();
+        }
+        errors
+            .into_iter()
+            .map(|(u, e)| {
+                let which = if u == cfg.share_url.trim() { "Main link" } else { "Backup link" };
+                format!("{which}: {e}")
+            })
+            .collect::<Vec<_>>()
+            .join(" · ")
+    }
+
+    /// Album listing (cached), trying each link in turn.
+    async fn assets(&self, cfg: &Config) -> Result<Vec<Asset>, String> {
         if let Some(c) = self.cache.lock().unwrap().as_ref() {
-            if c.share_url == share_url && c.fetched.elapsed() < LIST_CACHE {
+            if c.share_url == cfg.share_url && c.fetched.elapsed() < LIST_CACHE {
                 return Ok(c.assets.clone());
             }
         }
-        let assets = client.list_assets().await.map_err(|e| e.to_string())?;
-        *self.cache.lock().unwrap() = Some(ListCache {
-            share_url: share_url.to_string(),
-            fetched: Instant::now(),
-            assets: assets.clone(),
-        });
-        Ok(assets)
+        let mut errors = Vec::new();
+        for (url, client) in self.links(cfg)? {
+            match client.list_assets().await {
+                Ok(assets) => {
+                    *self.last_good_link.lock().unwrap() = Some(url);
+                    // Both links show the same album, so cache by the main link.
+                    *self.cache.lock().unwrap() = Some(ListCache {
+                        share_url: cfg.share_url.clone(),
+                        fetched: Instant::now(),
+                        assets: assets.clone(),
+                    });
+                    return Ok(assets);
+                }
+                Err(e) => errors.push((url, e.to_string())),
+            }
+        }
+        Err(Self::link_errors(cfg, errors))
+    }
+
+    /// Download a photo, trying each link in turn.
+    async fn download(
+        &self,
+        cfg: &Config,
+        asset: &Asset,
+        dir: &Path,
+        prefix: &str,
+        stamp: u64,
+    ) -> Result<PathBuf, String> {
+        let mut errors = Vec::new();
+        for (url, client) in self.links(cfg)? {
+            match download_to(&client, asset, cfg.prefer_original, dir, prefix, stamp).await {
+                Ok(path) => {
+                    *self.last_good_link.lock().unwrap() = Some(url);
+                    return Ok(path);
+                }
+                Err(e) => errors.push((url, e)),
+            }
+        }
+        Err(Self::link_errors(cfg, errors))
     }
 
     /// Change the wallpaper now. Records the outcome in `status`.
@@ -143,8 +209,7 @@ impl Engine {
 
         // 2. Download whatever is still missing.
         if originals.len() < need {
-            let client = self.client(&cfg)?;
-            let assets = self.assets(&client, &cfg.share_url).await?;
+            let assets = self.assets(&cfg).await?;
             self.status.lock().unwrap().photo_count = Some(assets.iter().filter(|a| a.is_image).count());
             while originals.len() < need {
                 let asset = {
@@ -153,7 +218,7 @@ impl Engine {
                 }
                 .ok_or("The shared album has no photos.")?;
                 let prefix = if originals.is_empty() { "desktop-orig" } else { "lock-orig" };
-                let path = download_to(&client, &asset, cfg.prefer_original, &dir, prefix, stamp).await?;
+                let path = self.download(&cfg, &asset, &dir, prefix, stamp).await?;
                 originals.push((asset.id, path));
             }
         }
@@ -173,10 +238,6 @@ impl Engine {
             st.current_lock_original = lock_orig.clone();
         }
         self.apply_originals(app, &cfg, &dir, desktop_orig, lock_orig, stamp).await
-    }
-
-    fn client(&self, cfg: &Config) -> Result<ImmichClient, String> {
-        ImmichClient::new(ShareLink::parse(&cfg.share_url).map_err(|e| e.to_string())?).map_err(|e| e.to_string())
     }
 
     /// Drop cached photos that don't match the current settings.
@@ -211,7 +272,6 @@ impl Engine {
         if std::fs::create_dir_all(&qdir).is_err() {
             return;
         }
-        let Ok(client) = self.client(&cfg) else { return };
         loop {
             let missing = {
                 let mut st = self.state.lock().unwrap();
@@ -221,13 +281,13 @@ impl Engine {
             if missing == 0 {
                 break;
             }
-            let Ok(assets) = self.assets(&client, &cfg.share_url).await else { break };
+            let Ok(assets) = self.assets(&cfg).await else { break };
             let asset = {
                 let mut st = self.state.lock().unwrap();
                 immich_core::pick(&assets, cfg.orientation, &mut st.history, &mut rand::thread_rng()).cloned()
             };
             let Some(asset) = asset else { break };
-            let Ok(path) = download_to(&client, &asset, cfg.prefer_original, &qdir, "q", now_millis()).await else {
+            let Ok(path) = self.download(&cfg, &asset, &qdir, "q", now_millis()).await else {
                 break;
             };
             let state = {

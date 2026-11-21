@@ -13,6 +13,10 @@ use tauri::{AppHandle, Manager};
 pub struct Config {
     /// Immich public share link, e.g. https://photos.example.com/share/XXXX
     pub share_url: String,
+    /// Also try `backup_share_url` when `share_url` can't be reached
+    /// (e.g. a Tailscale or home-network address for the same album).
+    pub use_backup_link: bool,
+    pub backup_share_url: String,
     pub interval_minutes: u32,
     pub set_desktop: bool,
     /// Windows only (macOS lock screen follows the desktop picture).
@@ -51,6 +55,8 @@ impl Default for Config {
     fn default() -> Self {
         Self {
             share_url: String::new(),
+            use_backup_link: false,
+            backup_share_url: String::new(),
             interval_minutes: 60,
             set_desktop: true,
             set_lock_screen: true,
