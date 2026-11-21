@@ -37,9 +37,84 @@ fn set_desktop_com(path: &HSTRING) -> windows::core::Result<()> {
         let init = CoInitializeEx(None, COINIT_APARTMENTTHREADED);
         let result = (|| {
             let dw: IDesktopWallpaper = CoCreateInstance(&DesktopWallpaper, None, CLSCTX_ALL)?;
-            dw.SetPosition(DWPOS_FILL)?;
+            ensure_fill(&dw)?;
             // A null monitor id applies the image to all monitors.
             dw.SetWallpaper(PCWSTR::null(), path)
+        })();
+        if init.is_ok() {
+            CoUninitialize();
+        }
+        result
+    }
+}
+
+/// Set the "Fill" layout only if it isn't already: every SetPosition makes
+/// Windows redraw the whole desktop, which is a visible hitch.
+unsafe fn ensure_fill(dw: &IDesktopWallpaper) -> windows::core::Result<()> {
+    if dw.GetPosition().ok() != Some(DWPOS_FILL) {
+        dw.SetPosition(DWPOS_FILL)?;
+    }
+    Ok(())
+}
+
+/// Change the wallpaper through Windows' own slideshow, so Windows crossfades
+/// from the current picture (`prev`) to `next` instead of swapping abruptly.
+///
+/// Windows' slideshow shows the same picture on every monitor. Falls back to
+/// [`set_desktop`] if anything about the slideshow fails.
+pub fn set_desktop_slideshow(prev: Option<&Path>, next: &Path) -> Result<()> {
+    match slideshow_com(prev, next) {
+        Ok(()) => Ok(()),
+        Err(_) => set_desktop(next),
+    }
+}
+
+fn slideshow_com(prev: Option<&Path>, next: &Path) -> windows::core::Result<()> {
+    use windows::Win32::System::Com::CoTaskMemFree;
+    use windows::Win32::UI::Shell::Common::ITEMIDLIST;
+    use windows::Win32::UI::Shell::{
+        ILFree, SHCreateShellItemArrayFromIDLists, SHParseDisplayName, DESKTOP_SLIDESHOW_OPTIONS, DSD_FORWARD,
+    };
+    // Longest tick Windows accepts; the app advances the slideshow itself.
+    const NEVER_MS: u32 = u32::MAX;
+
+    unsafe {
+        let init = CoInitializeEx(None, COINIT_APARTMENTTHREADED);
+        let result = (|| -> windows::core::Result<()> {
+            let dw: IDesktopWallpaper = CoCreateInstance(&DesktopWallpaper, None, CLSCTX_ALL)?;
+            ensure_fill(&dw)?;
+
+            // Slideshow list: [previous, next] so "forward" fades prev -> next.
+            let mut pidls: Vec<*mut ITEMIDLIST> = Vec::new();
+            for p in prev.into_iter().chain(std::iter::once(next)) {
+                let mut pidl = std::ptr::null_mut();
+                SHParseDisplayName(&HSTRING::from(p.as_os_str()), None, &mut pidl, 0, None)?;
+                pidls.push(pidl);
+            }
+            let consts: Vec<*const ITEMIDLIST> = pidls.iter().map(|p| *p as *const _).collect();
+            let items = SHCreateShellItemArrayFromIDLists(&consts);
+            for p in pidls {
+                ILFree(Some(p));
+            }
+            let items = items?;
+
+            dw.SetSlideshowOptions(DESKTOP_SLIDESHOW_OPTIONS(0), NEVER_MS)?; // in order, no shuffle
+            dw.SetSlideshow(&items)?;
+
+            // After SetSlideshow Windows normally still shows `prev` (first in
+            // the list); one step forward crossfades to `next`. Decide once,
+            // so a path Windows reports differently can't cause extra steps.
+            let current = dw.GetWallpaper(PCWSTR::null()).ok().map(|p| {
+                let s = p.to_string().unwrap_or_default();
+                CoTaskMemFree(Some(p.0 as _));
+                s
+            });
+            let is = |path: &Path, cur: &str| cur.eq_ignore_ascii_case(&path.to_string_lossy());
+            let already_next = current.as_deref().is_some_and(|c| is(next, c));
+            if prev.is_some() && !already_next {
+                dw.AdvanceSlideshow(PCWSTR::null(), DSD_FORWARD)?;
+            }
+            Ok(())
         })();
         if init.is_ok() {
             CoUninitialize();
@@ -63,7 +138,7 @@ pub fn set_desktop_split(primary: &Path, others: &Path) -> Result<()> {
         let init = CoInitializeEx(None, COINIT_APARTMENTTHREADED);
         let result = (|| -> windows::core::Result<()> {
             let dw: IDesktopWallpaper = CoCreateInstance(&DesktopWallpaper, None, CLSCTX_ALL)?;
-            dw.SetPosition(DWPOS_FILL)?;
+            ensure_fill(&dw)?;
             for i in 0..dw.GetMonitorDevicePathCount()? {
                 let id = dw.GetMonitorDevicePathAt(i)?;
                 let monitor = PCWSTR(id.0);

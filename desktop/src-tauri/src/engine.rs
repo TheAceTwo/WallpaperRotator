@@ -366,10 +366,19 @@ impl Engine {
             None => None,
         };
 
+        let prev_desktop = self.state.lock().unwrap().current_desktop_file.clone().filter(|p| p.exists());
         if cfg.set_desktop {
-            apply_desktop(app, desktop_file.clone(), other_file.clone()).await?;
+            let smooth = cfg.smooth_transitions && desktop_file == other_file;
+            apply_desktop(app, desktop_file.clone(), other_file.clone(), prev_desktop.clone(), smooth).await?;
+            self.state.lock().unwrap().current_desktop_file = Some(desktop_file.clone());
         }
         if let Some(lock) = lock_file.clone() {
+            // Don't stack the lock-screen update on top of the desktop
+            // change: each makes Windows decode an image, and together they
+            // make a longer hitch.
+            if cfg.set_desktop {
+                tokio::time::sleep(Duration::from_secs(3)).await;
+            }
             let allow_policy = cfg.allow_policy_lock_screen;
             let res = tauri::async_runtime::spawn_blocking(move || wallsetter::set_lock_screen(&lock, allow_policy))
                 .await
@@ -383,7 +392,8 @@ impl Engine {
             };
         }
 
-        cleanup(dir, &[Some(desktop_orig), lock_orig, Some(desktop_file), Some(other_file), lock_file]);
+        // Keep the previous picture too: Windows may still be fading from it.
+        cleanup(dir, &[Some(desktop_orig), lock_orig, Some(desktop_file), Some(other_file), lock_file, prev_desktop]);
         let state = self.state.lock().unwrap().clone();
         let _ = config::save_state(app, &state);
         Ok(())
@@ -508,7 +518,13 @@ fn cleanup(dir: &Path, keep: &[Option<PathBuf>]) {
 
 /// Set `main` on the main monitor and `others` on the rest.
 #[cfg(target_os = "macos")]
-async fn apply_desktop(app: &AppHandle, main: PathBuf, others: PathBuf) -> Result<(), String> {
+async fn apply_desktop(
+    app: &AppHandle,
+    main: PathBuf,
+    others: PathBuf,
+    _prev: Option<PathBuf>,
+    _smooth: bool,
+) -> Result<(), String> {
     // AppKit needs the main thread.
     let (tx, rx) = tokio::sync::oneshot::channel();
     app.run_on_main_thread(move || {
@@ -518,10 +534,20 @@ async fn apply_desktop(app: &AppHandle, main: PathBuf, others: PathBuf) -> Resul
     rx.await.map_err(|e| e.to_string())?
 }
 
+/// With `smooth` (Windows), go through Windows' slideshow so it crossfades
+/// from `prev` instead of swapping abruptly.
 #[cfg(not(target_os = "macos"))]
-async fn apply_desktop(_app: &AppHandle, main: PathBuf, others: PathBuf) -> Result<(), String> {
+async fn apply_desktop(
+    _app: &AppHandle,
+    main: PathBuf,
+    others: PathBuf,
+    prev: Option<PathBuf>,
+    smooth: bool,
+) -> Result<(), String> {
     tauri::async_runtime::spawn_blocking(move || {
-        if main == others {
+        if main == others && smooth {
+            wallsetter::set_desktop_slideshow(prev.as_deref(), &main)
+        } else if main == others {
             wallsetter::set_desktop(&main)
         } else {
             wallsetter::set_desktop_split(&main, &others)
@@ -567,7 +593,10 @@ async fn processed(
     fit: Option<(u32, u32)>,
 ) -> Result<PathBuf, String> {
     let (orig, dst) = (orig.to_path_buf(), dir.join(format!("{prefix}-{stamp}.jpg")));
-    tauri::async_runtime::spawn_blocking(move || crate::effects::apply_effects(&orig, &dst, fx, fit))
+    // Low priority: this work must never take CPU from games or the desktop.
+    tauri::async_runtime::spawn_blocking(move || {
+        wallsetter::system::in_background(|| crate::effects::apply_effects(&orig, &dst, fx, fit))
+    })
         .await
         .map_err(|e| e.to_string())?
 }

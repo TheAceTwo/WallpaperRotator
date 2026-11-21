@@ -47,6 +47,8 @@ pub struct Config {
     pub change_on_unlock: bool,
     /// Windows: hold timed/unlock changes while a full-screen game or app runs.
     pub pause_during_fullscreen: bool,
+    /// Windows: change pictures through Windows' slideshow, which crossfades.
+    pub smooth_transitions: bool,
     /// The "drag my icon out of the ^ menu" tip was dismissed.
     pub tray_hint_dismissed: bool,
 }
@@ -75,6 +77,7 @@ impl Default for Config {
             change_on_startup: true,
             change_on_unlock: false,
             pause_during_fullscreen: true,
+            smooth_transitions: true,
             tray_hint_dismissed: false,
         }
     }
@@ -113,6 +116,8 @@ pub struct State {
     /// changed without downloading again.
     pub current_desktop_original: Option<PathBuf>,
     pub current_lock_original: Option<PathBuf>,
+    /// The processed file currently on the desktop (where a crossfade starts).
+    pub current_desktop_file: Option<PathBuf>,
     /// Photos downloaded ahead of time (see schedule::QUEUE_LEN).
     pub queue: Vec<crate::schedule::QueuedPhoto>,
     /// Session start seen at the last launch (detects a fresh start).

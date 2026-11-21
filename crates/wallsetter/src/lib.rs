@@ -18,7 +18,9 @@ pub mod system;
 #[cfg(windows)]
 mod windows_impl;
 #[cfg(windows)]
-pub use windows_impl::{monitor_count, set_desktop, set_desktop_split, set_lock_screen, LockScreenMethod};
+pub use windows_impl::{
+    monitor_count, set_desktop, set_desktop_slideshow, set_desktop_split, set_lock_screen, LockScreenMethod,
+};
 
 #[cfg(target_os = "macos")]
 mod macos_impl;
@@ -27,6 +29,12 @@ pub use macos_impl::{monitor_count, set_desktop, set_desktop_split};
 
 /// Whether this OS lets us set a lock screen image separately from the desktop.
 pub const SUPPORTS_SEPARATE_LOCK_SCREEN: bool = cfg!(windows);
+
+/// Windows only; elsewhere a plain wallpaper change.
+#[cfg(not(windows))]
+pub fn set_desktop_slideshow(_prev: Option<&Path>, next: &Path) -> Result<()> {
+    set_desktop(next)
+}
 
 #[cfg(not(any(windows, target_os = "macos")))]
 pub fn monitor_count() -> usize {

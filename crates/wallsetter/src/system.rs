@@ -227,3 +227,45 @@ pub fn fullscreen_app_running() -> bool {
 pub fn fullscreen_app_running() -> bool {
     false
 }
+
+// ---------- background priority for heavy image work ----------
+
+/// Run `f` with the current thread in Windows' "background" mode (lower CPU,
+/// disk and memory priority), so resizing/blurring a photo can't take time
+/// away from games or the desktop. Elsewhere it just runs `f`.
+#[cfg(windows)]
+pub fn in_background<T>(f: impl FnOnce() -> T) -> T {
+    use windows::Win32::System::Threading::{
+        GetCurrentThread, SetThreadPriority, THREAD_MODE_BACKGROUND_BEGIN, THREAD_MODE_BACKGROUND_END,
+    };
+    // SAFETY: pseudo-handle for the current thread; always paired with END.
+    let began = unsafe { SetThreadPriority(GetCurrentThread(), THREAD_MODE_BACKGROUND_BEGIN).is_ok() };
+    let out = f();
+    if began {
+        unsafe {
+            let _ = SetThreadPriority(GetCurrentThread(), THREAD_MODE_BACKGROUND_END);
+        }
+    }
+    out
+}
+
+/// macOS: run at the "background" quality-of-service class, then restore.
+#[cfg(target_os = "macos")]
+pub fn in_background<T>(f: impl FnOnce() -> T) -> T {
+    use libc::{pthread_get_qos_class_np, pthread_self, pthread_set_qos_class_self_np, qos_class_t};
+    let mut old = qos_class_t::QOS_CLASS_DEFAULT;
+    let mut rel = 0;
+    // SAFETY: querying/setting the calling thread's own QoS.
+    let saved = unsafe { pthread_get_qos_class_np(pthread_self(), &mut old, &mut rel) == 0 };
+    unsafe { pthread_set_qos_class_self_np(qos_class_t::QOS_CLASS_BACKGROUND, 0) };
+    let out = f();
+    if saved {
+        unsafe { pthread_set_qos_class_self_np(old, rel) };
+    }
+    out
+}
+
+#[cfg(not(any(windows, target_os = "macos")))]
+pub fn in_background<T>(f: impl FnOnce() -> T) -> T {
+    f()
+}
