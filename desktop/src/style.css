@@ -145,6 +145,10 @@ button.link {
   align-items: center;
   margin-top: 16px;
 }
+/* Label on its own line; the buttons share the row below in equal halves
+   (a single button, e.g. on macOS, fills the row). */
+.os-settings > span { flex-basis: 100%; }
+.os-settings > button { flex: 1 1 0; white-space: nowrap; }
 .os-settings[hidden] { display: none; }
 button.small { padding: 5px 12px; font-size: 13px; }
 
