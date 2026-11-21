@@ -148,6 +148,10 @@ button.link {
 /* Label on its own line; the buttons share the row below in equal halves
    (a single button, e.g. on macOS, fills the row). */
 .os-settings > span { flex-basis: 100%; }
+/* "Next wallpaper" near the top, between the link and the schedule. */
+.top-next { margin: 0 0 12px; }
+.top-next button { width: 100%; }
+.top-next .hint { text-align: center; }
 .os-settings > button { flex: 1 1 0; white-space: nowrap; }
 .os-settings[hidden] { display: none; }
 button.small { padding: 5px 12px; font-size: 13px; }

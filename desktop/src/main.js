@@ -332,17 +332,26 @@ $("save").addEventListener("click", async () => {
   }
 });
 
-$("next").addEventListener("click", async () => {
-  const btn = $("next");
-  btn.disabled = true;
+// Both "Next wallpaper" buttons (top and bottom) do the same thing.
+async function nextWallpaper() {
+  const buttons = [$("next"), $("nextTop")];
+  buttons.forEach((b) => (b.disabled = true));
+  $("nextTop").textContent = "Changing…";
+  $("nextTopResult").hidden = true;
   setMsg($("status"), "Fetching a new photo…");
   try {
     showStatus(await invoke("next_wallpaper"));
   } catch (e) {
     setMsg($("status"), String(e), "err");
+    // Also show problems by the top button, where the click happened.
+    setMsg($("nextTopResult"), String(e), "err");
+    $("nextTopResult").hidden = false;
   } finally {
-    btn.disabled = false;
+    buttons.forEach((b) => (b.disabled = false));
+    $("nextTop").textContent = "Next wallpaper";
   }
-});
+}
+$("next").addEventListener("click", nextWallpaper);
+$("nextTop").addEventListener("click", nextWallpaper);
 
 init().catch((e) => setMsg($("status"), String(e), "err"));
