@@ -1909,7 +1909,7 @@ dependencies = [
 
 [[package]]
 name = "immich-core"
-version = "0.1.7"
+version = "0.1.8"
 dependencies = [
  "rand 0.8.8",
  "reqwest 0.12.28",
@@ -5034,7 +5034,7 @@ dependencies = [
 
 [[package]]
 name = "wallpaper-rotator"
-version = "0.1.7"
+version = "0.1.8"
 dependencies = [
  "image",
  "immich-core",
@@ -5052,7 +5052,7 @@ dependencies = [
 
 [[package]]
 name = "wallsetter"
-version = "0.1.7"
+version = "0.1.8"
 dependencies = [
  "auto-launch",
  "libc",
