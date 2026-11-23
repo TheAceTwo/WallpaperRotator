@@ -49,6 +49,8 @@ pub struct Config {
     pub pause_during_fullscreen: bool,
     /// Windows: change pictures through Windows' slideshow, which crossfades.
     pub smooth_transitions: bool,
+    /// A different photo on each virtual desktop (Windows 11) / Space (macOS).
+    pub per_virtual_desktop: bool,
     /// The "drag my icon out of the ^ menu" tip was dismissed.
     pub tray_hint_dismissed: bool,
 }
@@ -78,6 +80,7 @@ impl Default for Config {
             change_on_unlock: false,
             pause_during_fullscreen: true,
             smooth_transitions: true,
+            per_virtual_desktop: false,
             tray_hint_dismissed: false,
         }
     }
@@ -118,6 +121,12 @@ pub struct State {
     pub current_lock_original: Option<PathBuf>,
     /// The processed file currently on the desktop (where a crossfade starts).
     pub current_desktop_file: Option<PathBuf>,
+    /// Originals for virtual desktops / Spaces 2..N this round.
+    pub current_extra_originals: Vec<PathBuf>,
+    /// This round's processed desktop pictures: [main, extras...]. macOS hands
+    /// these out as you switch to Spaces that still show an older picture.
+    pub round_desktop_files: Vec<PathBuf>,
+    pub next_space_photo: usize,
     /// Photos downloaded ahead of time (see schedule::QUEUE_LEN).
     pub queue: Vec<crate::schedule::QueuedPhoto>,
     /// Session start seen at the last launch (detects a fresh start).

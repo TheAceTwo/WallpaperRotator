@@ -189,7 +189,27 @@ impl Engine {
         let stamp = now_millis();
 
         let want_lock = cfg.set_lock_screen && wallsetter::SUPPORTS_SEPARATE_LOCK_SCREEN;
-        let need = if want_lock && cfg.separate_lock_image { 2 } else { 1 };
+        let extras = if cfg.per_virtual_desktop && cfg!(windows) {
+            let count = tauri::async_runtime::spawn_blocking(wallsetter::system::virtual_desktop_count)
+                .await
+                .ok()
+                .flatten();
+            schedule::extra_desktop_photos(true, count, false)
+        } else {
+            schedule::extra_desktop_photos(cfg.per_virtual_desktop, None, cfg!(target_os = "macos"))
+        };
+        let separate_lock = want_lock && cfg.separate_lock_image;
+        let need = 1 + extras + usize::from(separate_lock);
+        // File-name prefix for the i-th photo of this change.
+        let prefix = |i: usize| -> String {
+            if i == 0 {
+                "desktop-orig".into()
+            } else if i <= extras {
+                format!("vd{i}-orig")
+            } else {
+                "lock-orig".into()
+            }
+        };
 
         // 1. Use photos downloaded ahead of time (instant, works offline).
         let queued = {
@@ -201,7 +221,7 @@ impl Engine {
         for (i, q) in queued.into_iter().enumerate() {
             // Move it out of the cache folder so normal cleanup manages it.
             let ext = q.path.extension().and_then(|e| e.to_str()).unwrap_or("jpg").to_string();
-            let dest = dir.join(format!("{}-orig-{stamp}.{ext}", if i == 0 { "desktop" } else { "lock" }));
+            let dest = dir.join(format!("{}-{stamp}.{ext}", prefix(i)));
             if std::fs::rename(&q.path, &dest).is_ok() {
                 originals.push((q.asset_id, dest));
             }
@@ -217,16 +237,16 @@ impl Engine {
                     immich_core::pick(&assets, cfg.orientation, &mut st.history, &mut rand::thread_rng()).cloned()
                 }
                 .ok_or("The shared album has no photos.")?;
-                let prefix = if originals.is_empty() { "desktop-orig" } else { "lock-orig" };
-                let path = self.download(&cfg, &asset, &dir, prefix, stamp).await?;
+                let path = self.download(&cfg, &asset, &dir, &prefix(originals.len()), stamp).await?;
                 originals.push((asset.id, path));
             }
         }
 
         let desktop_orig = originals[0].1.clone();
+        let extra_origs: Vec<PathBuf> = originals.iter().skip(1).take(extras).map(|(_, p)| p.clone()).collect();
         let lock_orig = if !want_lock {
             None
-        } else if let Some((id, p)) = originals.get(1) {
+        } else if let Some((id, p)) = originals.get(1 + extras).filter(|_| separate_lock) {
             // Separate lock photo, unless it happens to be the same one.
             Some(if *id == originals[0].0 { desktop_orig.clone() } else { p.clone() })
         } else {
@@ -236,8 +256,9 @@ impl Engine {
             let mut st = self.state.lock().unwrap();
             st.current_desktop_original = Some(desktop_orig.clone());
             st.current_lock_original = lock_orig.clone();
+            st.current_extra_originals = extra_origs.clone();
         }
-        self.apply_originals(app, &cfg, &dir, desktop_orig, lock_orig, stamp).await
+        self.apply_originals(app, &cfg, &dir, desktop_orig, extra_origs, lock_orig, stamp).await
     }
 
     /// Drop cached photos that don't match the current settings.
@@ -317,17 +338,19 @@ impl Engine {
     pub async fn reapply(&self, app: &AppHandle) -> Result<(), String> {
         let _guard = self.busy.lock().await;
         let cfg = self.config();
-        let (desktop_orig, lock_orig) = {
+        let (desktop_orig, lock_orig, extra_origs) = {
             let st = self.state.lock().unwrap();
-            (st.current_desktop_original.clone(), st.current_lock_original.clone())
+            let extras: Vec<PathBuf> = st.current_extra_originals.iter().filter(|p| p.exists()).cloned().collect();
+            (st.current_desktop_original.clone(), st.current_lock_original.clone(), extras)
         };
+        let extra_origs = if cfg_per_vd(&self.config()) { extra_origs } else { Vec::new() };
         let desktop_orig = desktop_orig
             .filter(|p| p.exists())
             .ok_or("No wallpaper has been set yet. It will be dimmed when the next photo is applied.")?;
         let want_lock = cfg.set_lock_screen && wallsetter::SUPPORTS_SEPARATE_LOCK_SCREEN;
         let lock_orig = lock_orig.filter(|p| want_lock && p.exists());
         let dir = config::wallpaper_dir(app);
-        let result = self.apply_originals(app, &cfg, &dir, desktop_orig, lock_orig, now_millis()).await;
+        let result = self.apply_originals(app, &cfg, &dir, desktop_orig, extra_origs, lock_orig, now_millis()).await;
         if let Err(e) = &result {
             self.status.lock().unwrap().last_error = Some(e.clone());
         }
@@ -342,6 +365,7 @@ impl Engine {
         cfg: &Config,
         dir: &Path,
         desktop_orig: PathBuf,
+        extra_origs: Vec<PathBuf>,
         lock_orig: Option<PathBuf>,
         stamp: u64,
     ) -> Result<(), String> {
@@ -366,11 +390,33 @@ impl Engine {
             None => None,
         };
 
+        // Pictures for virtual desktops / Spaces 2..N (same dim & blur as the main monitor).
+        let mut extra_files = Vec::new();
+        for (i, orig) in extra_origs.iter().enumerate() {
+            extra_files.push(processed(orig, dir, &format!("vd{}", i + 1), stamp, main_fx, fit).await?);
+        }
+
         let prev_desktop = self.state.lock().unwrap().current_desktop_file.clone().filter(|p| p.exists());
         if cfg.set_desktop {
-            let smooth = cfg.smooth_transitions && desktop_file == other_file;
-            apply_desktop(app, desktop_file.clone(), other_file.clone(), prev_desktop.clone(), smooth).await?;
-            self.state.lock().unwrap().current_desktop_file = Some(desktop_file.clone());
+            let mut done = false;
+            if cfg!(windows) && !extra_files.is_empty() {
+                // One photo per virtual desktop. If Windows refuses (older
+                // version, or a big update changed the hidden API), fall back
+                // to one photo everywhere without bothering the user.
+                let all: Vec<PathBuf> = std::iter::once(desktop_file.clone()).chain(extra_files.iter().cloned()).collect();
+                done = tauri::async_runtime::spawn_blocking(move || wallsetter::system::set_virtual_desktop_wallpapers(&all))
+                    .await
+                    .map(|r| r.is_ok())
+                    .unwrap_or(false);
+            }
+            if !done {
+                let smooth = cfg.smooth_transitions && desktop_file == other_file;
+                apply_desktop(app, desktop_file.clone(), other_file.clone(), prev_desktop.clone(), smooth).await?;
+            }
+            let mut st = self.state.lock().unwrap();
+            st.current_desktop_file = Some(desktop_file.clone());
+            st.round_desktop_files = std::iter::once(desktop_file.clone()).chain(extra_files.iter().cloned()).collect();
+            st.next_space_photo = 1;
         }
         if let Some(lock) = lock_file.clone() {
             // Don't stack the lock-screen update on top of the desktop
@@ -393,7 +439,10 @@ impl Engine {
         }
 
         // Keep the previous picture too: Windows may still be fading from it.
-        cleanup(dir, &[Some(desktop_orig), lock_orig, Some(desktop_file), Some(other_file), lock_file, prev_desktop]);
+        let mut keep = vec![Some(desktop_orig), lock_orig, Some(desktop_file), Some(other_file), lock_file, prev_desktop];
+        keep.extend(extra_origs.into_iter().map(Some));
+        keep.extend(extra_files.into_iter().map(Some));
+        cleanup(dir, &keep);
         let state = self.state.lock().unwrap().clone();
         let _ = config::save_state(app, &state);
         Ok(())
@@ -456,6 +505,42 @@ impl Engine {
                 return;
             }
             tokio::time::sleep(Duration::from_secs(15)).await;
+        }
+    }
+
+    /// macOS only lets apps change the *current* Space. When you switch to a
+    /// Space still showing an older picture, give it this round's photo: the
+    /// main one, or (with "different photo on each Space") the next extra one.
+    pub async fn run_space_watcher(&self, app: AppHandle) {
+        if !cfg!(target_os = "macos") {
+            return;
+        }
+        loop {
+            tokio::time::sleep(Duration::from_secs(2)).await;
+            let cfg = self.config();
+            if !cfg.set_desktop || cfg.paused {
+                continue;
+            }
+            let round = self.state.lock().unwrap().round_desktop_files.clone();
+            if round.is_empty() || !round.iter().all(|p| p.exists()) {
+                continue;
+            }
+            let Ok(_guard) = self.busy.try_lock() else { continue };
+            let showing = on_main_thread(&app, wallsetter::system::current_space_picture).await.flatten();
+            if showing.as_ref().is_some_and(|s| round.contains(s)) {
+                continue;
+            }
+            let pick = {
+                let mut st = self.state.lock().unwrap();
+                if cfg.per_virtual_desktop && round.len() > 1 {
+                    let i = st.next_space_photo % round.len();
+                    st.next_space_photo = i + 1;
+                    round[i].clone()
+                } else {
+                    round[0].clone()
+                }
+            };
+            let _ = on_main_thread(&app, move || wallsetter::set_desktop(&pick)).await;
         }
     }
 
@@ -555,6 +640,21 @@ async fn apply_desktop(
     })
     .await
     .map_err(|e| e.to_string())?
+}
+
+/// Is "different photo on each virtual desktop / Space" in effect?
+fn cfg_per_vd(cfg: &Config) -> bool {
+    cfg.per_virtual_desktop && (cfg!(windows) || cfg!(target_os = "macos"))
+}
+
+/// Run `f` on the main thread (AppKit requires it) and wait for the result.
+async fn on_main_thread<T: Send + 'static>(app: &AppHandle, f: impl FnOnce() -> T + Send + 'static) -> Option<T> {
+    let (tx, rx) = tokio::sync::oneshot::channel();
+    app.run_on_main_thread(move || {
+        let _ = tx.send(f());
+    })
+    .ok()?;
+    rx.await.ok()
 }
 
 /// Number of monitors (AppKit needs the main thread on macOS).

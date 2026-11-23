@@ -75,6 +75,27 @@ pub fn link_order(main: &str, backup: Option<&str>, last_good: Option<&str>) -> 
     urls
 }
 
+/// Most virtual desktops that get their own photo (more just cycle).
+pub const MAX_DESKTOP_PHOTOS: usize = 10;
+/// macOS can't count Spaces publicly; this many extra photos are prepared
+/// per change and handed out as you visit other Spaces.
+pub const MAC_SPACE_PHOTOS: usize = 3;
+
+/// How many photos *besides* the main one each change needs for
+/// "different photo on each virtual desktop / Space".
+pub fn extra_desktop_photos(enabled: bool, windows_desktops: Option<usize>, is_mac: bool) -> usize {
+    if !enabled {
+        return 0;
+    }
+    if is_mac {
+        return MAC_SPACE_PHOTOS;
+    }
+    match windows_desktops {
+        Some(n) if n > 1 => n.min(MAX_DESKTOP_PHOTOS) - 1,
+        _ => 0, // one desktop, or not supported on this Windows
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -103,6 +124,16 @@ mod tests {
         assert_eq!(take(&mut queue, 1)[0].asset_id, "a");
         assert_eq!(take(&mut queue, 5).len(), 1);
         assert!(take(&mut queue, 1).is_empty());
+    }
+
+    #[test]
+    fn extra_photo_counts() {
+        assert_eq!(extra_desktop_photos(false, Some(4), false), 0, "setting off");
+        assert_eq!(extra_desktop_photos(true, Some(4), false), 3, "4 desktops -> 3 extra");
+        assert_eq!(extra_desktop_photos(true, Some(1), false), 0, "one desktop");
+        assert_eq!(extra_desktop_photos(true, None, false), 0, "unsupported Windows");
+        assert_eq!(extra_desktop_photos(true, Some(25), false), MAX_DESKTOP_PHOTOS - 1, "capped");
+        assert_eq!(extra_desktop_photos(true, None, true), MAC_SPACE_PHOTOS, "macOS");
     }
 
     #[test]

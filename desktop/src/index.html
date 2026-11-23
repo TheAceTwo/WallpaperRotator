@@ -105,6 +105,10 @@
     <details class="card">
       <summary>Advanced</summary>
       <label class="check"><input id="useBackupLink" type="checkbox" /> Use a backup link if the main one can't be reached</label>
+      <div id="perDesktopRow" hidden>
+        <label class="check"><input id="perVirtualDesktop" type="checkbox" /> <span id="perDesktopLabel">Use a different photo on each virtual desktop</span></label>
+        <p id="perDesktopHint" class="hint"></p>
+      </div>
       <label id="smoothRow" class="check" hidden><input id="smoothTransitions" type="checkbox" /> Smooth transitions (fade between photos using Windows' slideshow)</label>
       <label class="check"><input id="autoUpdate" type="checkbox" /> Install app updates automatically</label>
       <label class="check"><input id="preferOriginal" type="checkbox" /> Use full-resolution originals when available</label>

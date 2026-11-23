@@ -269,3 +269,59 @@ pub fn in_background<T>(f: impl FnOnce() -> T) -> T {
 pub fn in_background<T>(f: impl FnOnce() -> T) -> T {
     f()
 }
+
+// ---------- virtual desktops (Windows) / Spaces (macOS) ----------
+
+/// Number of Windows virtual desktops, or `None` where per-desktop
+/// wallpapers aren't available (needs Windows 11 24H2 or newer; uses an
+/// undocumented Windows API that can change in big updates).
+#[cfg(windows)]
+pub fn virtual_desktop_count() -> Option<usize> {
+    std::panic::catch_unwind(|| winvd::get_desktop_count().ok().map(|n| n as usize)).ok().flatten()
+}
+
+#[cfg(not(windows))]
+pub fn virtual_desktop_count() -> Option<usize> {
+    None
+}
+
+/// Give each virtual desktop its own picture: desktop 1 gets `paths[0]`,
+/// desktop 2 `paths[1]`, and so on (cycling if there are more desktops).
+#[cfg(windows)]
+pub fn set_virtual_desktop_wallpapers(paths: &[std::path::PathBuf]) -> Result<()> {
+    if paths.is_empty() {
+        return Err("no pictures".into());
+    }
+    std::panic::catch_unwind(|| -> Result<()> {
+        let desktops = winvd::get_desktops().map_err(|e| format!("virtual desktops unavailable: {e:?}"))?;
+        for (i, d) in desktops.iter().enumerate() {
+            let path = paths[i % paths.len()].to_string_lossy().to_string();
+            d.set_wallpaper(&path).map_err(|e| format!("couldn't set desktop {}: {e:?}", i + 1))?;
+        }
+        Ok(())
+    })
+    .unwrap_or_else(|_| Err("virtual desktop API failed".into()))
+}
+
+#[cfg(not(windows))]
+pub fn set_virtual_desktop_wallpapers(_paths: &[std::path::PathBuf]) -> Result<()> {
+    Err("per-desktop wallpapers need Windows 11".into())
+}
+
+/// macOS: the picture shown on the main screen in the *current* Space.
+/// Must run on the main thread. macOS only lets apps change the current
+/// Space, so the app checks this after Space switches.
+#[cfg(target_os = "macos")]
+pub fn current_space_picture() -> Option<std::path::PathBuf> {
+    use objc2_app_kit::{NSScreen, NSWorkspace};
+    use objc2_foundation::MainThreadMarker;
+    let mtm = MainThreadMarker::new()?;
+    let screen = NSScreen::screens(mtm).firstObject()?;
+    let url = NSWorkspace::sharedWorkspace().desktopImageURLForScreen(&screen)?;
+    url.path().map(|p| std::path::PathBuf::from(p.to_string()))
+}
+
+#[cfg(not(target_os = "macos"))]
+pub fn current_space_picture() -> Option<std::path::PathBuf> {
+    None
+}

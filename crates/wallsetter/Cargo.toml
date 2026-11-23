@@ -7,6 +7,8 @@ license.workspace = true
 
 [target.'cfg(windows)'.dependencies]
 auto-launch = "0.6"
+# Per-virtual-desktop wallpapers (Windows 11 24H2+, undocumented shell API).
+winvd = "0.0.49"
 winreg = "0.55"
 windows = { version = "0.61", features = [
   "Foundation",

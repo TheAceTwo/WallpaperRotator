@@ -2,7 +2,7 @@ const { invoke } = window.__TAURI__.core;
 const { listen } = window.__TAURI__.event;
 
 const $ = (id) => document.getElementById(id);
-const boolFields = ["setDesktop", "setLockScreen", "separateLockImage", "preferOriginal", "allowPolicyLockScreen", "autoUpdate", "changeOnStartup", "changeOnUnlock", "pauseDuringFullscreen", "useBackupLink", "smoothTransitions"];
+const boolFields = ["setDesktop", "setLockScreen", "separateLockImage", "preferOriginal", "allowPolicyLockScreen", "autoUpdate", "changeOnStartup", "changeOnUnlock", "pauseDuringFullscreen", "useBackupLink", "smoothTransitions", "perVirtualDesktop"];
 
 let config = null;
 
@@ -150,6 +150,7 @@ async function init() {
   $("dimLockRow").hidden = !platform.separateLockScreen;
   $("fullscreenRow").hidden = platform.os !== "windows";
   $("smoothRow").hidden = platform.os !== "windows";
+  setupPerDesktop(platform.os);
   $("trayHint").hidden = platform.os !== "windows" || !!config.trayHintDismissed;
   await refreshMonitors();
   $("autostart").checked = await invoke("get_autostart");
@@ -295,6 +296,28 @@ $("installUpdate").addEventListener("click", installNow);
 $("updateNow").addEventListener("click", installNow);
 
 $("setLockScreen").addEventListener("change", updateDependents);
+
+// "Different photo on each virtual desktop" (Windows 11) / "each Space" (macOS).
+async function setupPerDesktop(os) {
+  if (os !== "windows" && os !== "macos") return;
+  $("perDesktopRow").hidden = false;
+  if (os === "macos") {
+    $("perDesktopLabel").textContent = "Use a different photo on each Space";
+    $("perDesktopHint").textContent = "macOS only lets apps change the Space you're on, so other Spaces get their photo when you switch to them.";
+    return;
+  }
+  let count = null;
+  try {
+    count = await invoke("virtual_desktops");
+  } catch {}
+  if (count == null) {
+    $("perVirtualDesktop").disabled = true;
+    $("perDesktopHint").textContent = "Needs Windows 11 version 24H2 or newer.";
+  } else {
+    $("perDesktopHint").textContent =
+      `You have ${count} desktop${count === 1 ? "" : "s"}. Smooth transitions and per-monitor dim/blur don't apply while this is on.`;
+  }
+}
 
 // The backup link field only shows while the Advanced option is on.
 function showBackupRow() {

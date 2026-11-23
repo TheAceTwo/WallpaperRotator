@@ -152,6 +152,16 @@ fn hide_settings(app: AppHandle) {
     }
 }
 
+/// Windows: number of virtual desktops if per-desktop wallpapers work on
+/// this PC (Windows 11 24H2+), else null. macOS: always available (Spaces).
+#[tauri::command]
+async fn virtual_desktops() -> Option<usize> {
+    if cfg!(target_os = "macos") {
+        return Some(0);
+    }
+    tauri::async_runtime::spawn_blocking(wallsetter::system::virtual_desktop_count).await.ok().flatten()
+}
+
 /// Version of an update that was found but not installed yet.
 #[tauri::command]
 fn pending_update(app: AppHandle) -> Option<String> {
@@ -373,6 +383,7 @@ fn main() {
             monitor_count,
             pending_update,
             hide_settings,
+            virtual_desktops,
             dismiss_tray_hint
         ])
         .setup(|app| {
@@ -401,6 +412,10 @@ fn main() {
             let sched = handle.clone();
             tauri::async_runtime::spawn(async move {
                 engine(&sched).run_scheduler(sched.clone()).await;
+            });
+            let spaces = handle.clone();
+            tauri::async_runtime::spawn(async move {
+                engine(&spaces).run_space_watcher(spaces.clone()).await;
             });
             let unlock = handle.clone();
             tauri::async_runtime::spawn(async move {
