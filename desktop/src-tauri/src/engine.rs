@@ -4,6 +4,7 @@ use crate::config::{self, Config, State};
 use crate::schedule::{self, QueuedPhoto, QUEUE_LEN};
 use immich_core::{Asset, ImmichClient, ShareLink};
 use serde::Serialize;
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
@@ -26,18 +27,35 @@ pub struct Status {
 }
 
 struct ListCache {
-    share_url: String,
     fetched: Instant,
     assets: Vec<Asset>,
+}
+
+/// Photos from all active albums, and which album each came from (needed
+/// to download it: each album link has its own share key).
+pub struct Pool {
+    pub assets: Vec<Asset>,
+    album_of: HashMap<String, String>,
+}
+
+impl Pool {
+    fn album_for(&self, asset_id: &str) -> Option<&str> {
+        self.album_of.get(asset_id).map(String::as_str)
+    }
+
+    fn image_count(&self) -> usize {
+        self.assets.iter().filter(|a| a.is_image).count()
+    }
 }
 
 pub struct Engine {
     pub config: Mutex<Config>,
     state: Mutex<State>,
     status: Mutex<Status>,
-    cache: Mutex<Option<ListCache>>,
-    /// The link (main or backup) that worked most recently; tried first.
-    last_good_link: Mutex<Option<String>>,
+    /// Album listings by album link.
+    cache: Mutex<HashMap<String, ListCache>>,
+    /// The server address (main or backup) that worked most recently; tried first.
+    last_good_server: Mutex<Option<String>>,
     /// Serialises rotations so the timer and "Next" can't overlap.
     busy: tokio::sync::Mutex<()>,
     /// How the photos for the current change were obtained (for the log).
@@ -54,8 +72,8 @@ impl Engine {
             config: Mutex::new(config::load_config(app)),
             state: Mutex::new(config::load_state(app)),
             status: Mutex::new(Status::default()),
-            cache: Mutex::new(None),
-            last_good_link: Mutex::new(None),
+            cache: Mutex::new(HashMap::new()),
+            last_good_server: Mutex::new(None),
             busy: tokio::sync::Mutex::new(()),
             refilling: tokio::sync::Mutex::new(()),
             fetch_note: Mutex::new(String::new()),
@@ -72,82 +90,111 @@ impl Engine {
     }
 
     pub fn invalidate_cache(&self) {
-        *self.cache.lock().unwrap() = None;
+        self.cache.lock().unwrap().clear();
     }
 
-    /// The share link and, if enabled, the backup link, with whichever
-    /// worked last time first (so a link that's unreachable on this network
-    /// doesn't make every change wait for it to time out).
-    fn links(&self, cfg: &Config) -> Result<Vec<(String, ImmichClient)>, String> {
-        let last_good = self.last_good_link.lock().unwrap().clone();
-        let backup = cfg.use_backup_link.then_some(cfg.backup_share_url.as_str());
-        schedule::link_order(&cfg.share_url, backup, last_good.as_deref())
+    /// Clients for one album: its own address and, if enabled, the backup
+    /// address (same `/s/...` path, different server). Whichever worked last
+    /// goes first, so an address that's unreachable on this network doesn't
+    /// make every change wait for it to time out.
+    fn links(&self, cfg: &Config, album_url: &str) -> Result<Vec<(String, ImmichClient)>, String> {
+        let link = ShareLink::parse(album_url).map_err(|e| e.to_string())?;
+        let last_good = self.last_good_server.lock().unwrap().clone();
+        schedule::link_order(&link.server, cfg.backup_server(), last_good.as_deref())
             .into_iter()
-            .map(|u| {
-                let link = ShareLink::parse(&u).map_err(|e| e.to_string())?;
-                Ok((u, ImmichClient::new(link).map_err(|e| e.to_string())?))
+            .map(|server| {
+                let client = ImmichClient::new(link.with_server(&server)).map_err(|e| e.to_string())?;
+                Ok((server, client))
             })
             .collect()
     }
 
-    /// Combine per-link errors into one readable message.
+    /// Combine per-address errors into one readable message.
     fn link_errors(cfg: &Config, errors: Vec<(String, String)>) -> String {
         if errors.len() == 1 {
             return errors.into_iter().next().map(|(_, e)| e).unwrap_or_default();
         }
         errors
             .into_iter()
-            .map(|(u, e)| {
-                let which = if u == cfg.share_url.trim() { "Main link" } else { "Backup link" };
+            .map(|(server, e)| {
+                let which = if Some(server.as_str()) == cfg.backup_server() { "Backup address" } else { "Main address" };
                 format!("{which}: {e}")
             })
             .collect::<Vec<_>>()
             .join(" · ")
     }
 
-    /// Album listing (cached), trying each link in turn.
-    async fn assets(&self, cfg: &Config) -> Result<Vec<Asset>, String> {
-        if let Some(c) = self.cache.lock().unwrap().as_ref() {
-            if c.share_url == cfg.share_url && c.fetched.elapsed() < LIST_CACHE {
+    /// One album's listing (cached), trying each address in turn.
+    async fn album_assets(&self, cfg: &Config, album_url: &str) -> Result<Vec<Asset>, String> {
+        if let Some(c) = self.cache.lock().unwrap().get(album_url) {
+            if c.fetched.elapsed() < LIST_CACHE {
                 return Ok(c.assets.clone());
             }
         }
         let mut errors = Vec::new();
-        for (url, client) in self.links(cfg)? {
+        for (server, client) in self.links(cfg, album_url)? {
             match client.list_assets().await {
                 Ok(assets) => {
-                    *self.last_good_link.lock().unwrap() = Some(url);
-                    // Both links show the same album, so cache by the main link.
-                    *self.cache.lock().unwrap() = Some(ListCache {
-                        share_url: cfg.share_url.clone(),
-                        fetched: Instant::now(),
-                        assets: assets.clone(),
-                    });
+                    *self.last_good_server.lock().unwrap() = Some(server);
+                    self.cache
+                        .lock()
+                        .unwrap()
+                        .insert(album_url.to_string(), ListCache { fetched: Instant::now(), assets: assets.clone() });
                     return Ok(assets);
                 }
-                Err(e) => errors.push((url, e.to_string())),
+                Err(e) => errors.push((server, e.to_string())),
             }
         }
         Err(Self::link_errors(cfg, errors))
     }
 
-    /// Download a photo, trying each link in turn.
+    /// Photos from every active album, pooled so every photo is equally
+    /// likely (a bigger album shows up more often). An album that can't be
+    /// reached is skipped as long as another one works.
+    async fn assets(&self, cfg: &Config) -> Result<Pool, String> {
+        let urls = cfg.active_album_urls();
+        if urls.is_empty() {
+            return Err("Add an Immich album in Settings first.".into());
+        }
+        let mut pool = Pool { assets: Vec::new(), album_of: HashMap::new() };
+        let mut errors = Vec::new();
+        for url in &urls {
+            match self.album_assets(cfg, url).await {
+                Ok(list) => {
+                    for a in list {
+                        // A photo in two albums counts once.
+                        if pool.album_of.insert(a.id.clone(), url.clone()).is_none() {
+                            pool.assets.push(a);
+                        }
+                    }
+                }
+                Err(e) => errors.push(format!("{}: {e}", album_label(cfg, url))),
+            }
+        }
+        if pool.assets.is_empty() {
+            return Err(if errors.is_empty() { "The albums have no photos.".into() } else { errors.join(" · ") });
+        }
+        Ok(pool)
+    }
+
+    /// Download a photo from `album_url`, trying each address in turn.
     async fn download(
         &self,
         cfg: &Config,
+        album_url: &str,
         asset: &Asset,
         dir: &Path,
         prefix: &str,
         stamp: u64,
     ) -> Result<PathBuf, String> {
         let mut errors = Vec::new();
-        for (url, client) in self.links(cfg)? {
+        for (server, client) in self.links(cfg, album_url)? {
             match download_to(&client, asset, cfg.prefer_original, dir, prefix, stamp).await {
                 Ok(path) => {
-                    *self.last_good_link.lock().unwrap() = Some(url);
+                    *self.last_good_server.lock().unwrap() = Some(server);
                     return Ok(path);
                 }
-                Err(e) => errors.push((url, e)),
+                Err(e) => errors.push((server, e)),
             }
         }
         Err(Self::link_errors(cfg, errors))
@@ -186,8 +233,8 @@ impl Engine {
 
     async fn rotate_inner(&self, app: &AppHandle) -> Result<(), String> {
         let cfg = self.config();
-        if cfg.share_url.trim().is_empty() {
-            return Err("Add your Immich share link in Settings first.".into());
+        if !cfg.has_albums() {
+            return Err("Add an Immich album in Settings first.".into());
         }
         let dir = config::wallpaper_dir(app);
         std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
@@ -235,15 +282,16 @@ impl Engine {
 
         // 2. Download whatever is still missing.
         if originals.len() < need {
-            let assets = self.assets(&cfg).await?;
-            self.status.lock().unwrap().photo_count = Some(assets.iter().filter(|a| a.is_image).count());
+            let pool = self.assets(&cfg).await?;
+            self.status.lock().unwrap().photo_count = Some(pool.image_count());
             while originals.len() < need {
                 let asset = {
                     let mut st = self.state.lock().unwrap();
-                    immich_core::pick(&assets, cfg.orientation, &mut st.history, &mut rand::thread_rng()).cloned()
+                    immich_core::pick(&pool.assets, cfg.orientation, &mut st.history, &mut rand::thread_rng()).cloned()
                 }
-                .ok_or("The shared album has no photos.")?;
-                let path = self.download(&cfg, &asset, &dir, &prefix(originals.len()), stamp).await?;
+                .ok_or("The albums have no photos.")?;
+                let album = pool.album_for(&asset.id).unwrap_or_default().to_string();
+                let path = self.download(&cfg, &album, &asset, &dir, &prefix(originals.len()), stamp).await?;
                 originals.push((asset.id, path));
             }
         }
@@ -270,7 +318,7 @@ impl Engine {
 
     /// Drop cached photos that don't match the current settings.
     fn prune_locked(&self, st: &mut State, cfg: &Config) {
-        for p in schedule::prune_queue(&mut st.queue, &cfg.share_url, cfg.orientation, Path::exists) {
+        for p in schedule::prune_queue(&mut st.queue, &cfg.active_album_urls(), cfg.orientation, Path::exists) {
             let _ = std::fs::remove_file(p);
         }
     }
@@ -293,7 +341,7 @@ impl Engine {
     pub async fn refill_queue(&self, app: &AppHandle) {
         let Ok(_guard) = self.refilling.try_lock() else { return };
         let cfg = self.config();
-        if cfg.share_url.trim().is_empty() {
+        if !cfg.has_albums() {
             return;
         }
         let qdir = config::wallpaper_dir(app).join("queue");
@@ -309,13 +357,14 @@ impl Engine {
             if missing == 0 {
                 break;
             }
-            let Ok(assets) = self.assets(&cfg).await else { break };
+            let Ok(pool) = self.assets(&cfg).await else { break };
             let asset = {
                 let mut st = self.state.lock().unwrap();
-                immich_core::pick(&assets, cfg.orientation, &mut st.history, &mut rand::thread_rng()).cloned()
+                immich_core::pick(&pool.assets, cfg.orientation, &mut st.history, &mut rand::thread_rng()).cloned()
             };
             let Some(asset) = asset else { break };
-            let Ok(path) = self.download(&cfg, &asset, &qdir, "q", now_millis()).await else {
+            let album = pool.album_for(&asset.id).unwrap_or_default().to_string();
+            let Ok(path) = self.download(&cfg, &album, &asset, &qdir, "q", now_millis()).await else {
                 break;
             };
             let state = {
@@ -323,7 +372,7 @@ impl Engine {
                 st.queue.push(QueuedPhoto {
                     asset_id: asset.id,
                     path,
-                    share_url: cfg.share_url.clone(),
+                    share_url: album,
                     orientation: cfg.orientation,
                 });
                 st.clone()
@@ -513,7 +562,7 @@ impl Engine {
 
         loop {
             let cfg = self.config();
-            let ready = !cfg.paused && !cfg.share_url.trim().is_empty();
+            let ready = !cfg.paused && !!cfg.has_albums();
             let last = self.state.lock().unwrap().last_changed;
             if ready && (force || schedule::secs_until_due(last, cfg.interval_minutes, now_secs()) == 0) {
                 if !user_asked {
@@ -594,7 +643,7 @@ impl Engine {
         loop {
             tokio::time::sleep(Duration::from_secs(3)).await;
             let cfg = self.config();
-            if !cfg.change_on_unlock || cfg.paused || cfg.share_url.trim().is_empty() {
+            if !cfg.change_on_unlock || cfg.paused || !cfg.has_albums() {
                 was_locked = false;
                 continue;
             }
@@ -683,6 +732,17 @@ async fn apply_desktop(
     })
     .await
     .map_err(|e| e.to_string())?
+}
+
+/// An album's name for messages (its link if it has no name).
+fn album_label(cfg: &Config, url: &str) -> String {
+    cfg.albums
+        .iter()
+        .find(|a| a.url.trim() == url)
+        .map(|a| a.name.trim())
+        .filter(|n| !n.is_empty())
+        .map(str::to_string)
+        .unwrap_or_else(|| url.to_string())
 }
 
 /// Is "different photo on each virtual desktop / Space" in effect?

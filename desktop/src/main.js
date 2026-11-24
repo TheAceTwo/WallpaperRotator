@@ -2,7 +2,7 @@ const { invoke } = window.__TAURI__.core;
 const { listen } = window.__TAURI__.event;
 
 const $ = (id) => document.getElementById(id);
-const boolFields = ["setDesktop", "setLockScreen", "separateLockImage", "preferOriginal", "allowPolicyLockScreen", "autoUpdate", "changeOnStartup", "changeOnUnlock", "pauseDuringFullscreen", "useBackupLink", "smoothTransitions", "perVirtualDesktop"];
+const boolFields = ["setDesktop", "setLockScreen", "separateLockImage", "preferOriginal", "allowPolicyLockScreen", "autoUpdate", "changeOnStartup", "changeOnUnlock", "pauseDuringFullscreen", "useBackupDomain", "smoothTransitions", "perVirtualDesktop"];
 
 let config = null;
 
@@ -29,8 +29,10 @@ function showStatus(s) {
 
 function readForm() {
   const c = { ...config };
-  c.shareUrl = $("shareUrl").value.trim();
-  c.backupShareUrl = $("backupShareUrl").value.trim();
+  c.albums = albums.map((a) => ({ ...a }));
+  c.albumMode = document.querySelector('input[name="albumMode"]:checked')?.value ?? "all";
+  c.selectedAlbum = $("selectedAlbum").value;
+  c.backupDomain = $("backupDomain").value.trim();
   c.intervalMinutes = Number($("interval").value);
   c.orientation = $("orientation").value;
   for (const f of boolFields) c[f] = $(f).checked;
@@ -133,8 +135,9 @@ async function init() {
   }
 
   config = await invoke("get_config");
-  $("shareUrl").value = config.shareUrl;
-  $("backupShareUrl").value = config.backupShareUrl ?? "";
+  albums = (config.albums ?? []).map((a) => ({ ...a }));
+  $("backupDomain").value = config.backupDomain ?? "";
+  renderAlbums(config.albumMode ?? "all", config.selectedAlbum ?? "");
   const interval = $("interval");
   if (![...interval.options].some((o) => Number(o.value) === config.intervalMinutes)) {
     interval.add(new Option(`${config.intervalMinutes} minutes`, config.intervalMinutes));
@@ -325,29 +328,108 @@ async function setupPerDesktop(os) {
   }
 }
 
-// The backup link field only shows while the Advanced option is on.
-function showBackupRow() {
-  $("backupLinkRow").hidden = !$("useBackupLink").checked;
-}
-$("useBackupLink").addEventListener("change", showBackupRow);
+// ---- Albums ----
+let albums = [];
 
-async function testLink(inputId, buttonId, resultId) {
-  const btn = $(buttonId);
+function albumTitle(a) {
+  return a.name?.trim() || a.url;
+}
+
+/** Redraw the album list, the "which albums" choice and the picker. */
+function renderAlbums(mode, selected) {
+  const list = $("albumList");
+  list.replaceChildren();
+  albums.forEach((a, i) => {
+    const li = document.createElement("li");
+    const text = document.createElement("div");
+    text.className = "album-text";
+    const name = document.createElement("div");
+    name.className = "album-name";
+    name.textContent = albumTitle(a);
+    text.append(name);
+    if (a.name?.trim()) {
+      const url = document.createElement("div");
+      url.className = "album-url";
+      url.textContent = a.url;
+      text.append(url);
+    }
+    const remove = document.createElement("button");
+    remove.type = "button";
+    remove.className = "icon-button";
+    remove.title = "Remove album";
+    remove.setAttribute("aria-label", `Remove ${albumTitle(a)}`);
+    remove.textContent = "\u2715";
+    remove.addEventListener("click", () => {
+      albums.splice(i, 1);
+      renderAlbums(currentMode(), $("selectedAlbum").value);
+      setMsg($("testResult"), "Album removed. Click Save to keep this change.");
+    });
+    li.append(text, remove);
+    list.append(li);
+  });
+
+  const picker = $("selectedAlbum");
+  picker.replaceChildren(...albums.map((a) => new Option(albumTitle(a), a.url)));
+  if (albums.some((a) => a.url === selected)) picker.value = selected;
+  const radio = document.querySelector(`input[name="albumMode"][value="${mode === "one" ? "one" : "all"}"]`);
+  if (radio) radio.checked = true;
+  $("albumModeRow").hidden = albums.length < 2;
+  picker.disabled = currentMode() !== "one";
+}
+
+function currentMode() {
+  return document.querySelector('input[name="albumMode"]:checked')?.value ?? "all";
+}
+document.querySelectorAll('input[name="albumMode"]').forEach((r) =>
+  r.addEventListener("change", () => ($("selectedAlbum").disabled = currentMode() !== "one")),
+);
+
+function backupDomainIfOn() {
+  return $("useBackupDomain").checked ? $("backupDomain").value.trim() || null : null;
+}
+
+$("addAlbum").addEventListener("click", async () => {
+  const url = $("newAlbumUrl").value.trim();
+  if (!url) return;
+  if (albums.some((a) => a.url === url)) return setMsg($("testResult"), "That album is already in the list.", "err");
+  const btn = $("addAlbum");
   btn.disabled = true;
-  setMsg($(resultId), "Checking…");
+  setMsg($("testResult"), "Checking…");
   try {
-    const n = await invoke("test_link", { shareUrl: $(inputId).value.trim() });
-    setMsg($(resultId), `Connected: ${n} photos found.`, "ok");
+    const info = await invoke("inspect_album", { url, backupDomain: backupDomainIfOn() });
+    albums.push({ name: info.name ?? "", url });
+    $("newAlbumUrl").value = "";
+    renderAlbums(currentMode(), $("selectedAlbum").value);
+    setMsg($("testResult"), `Added${info.name ? ` “${info.name}”` : ""}: ${info.photoCount} photos. Click Save to start using it.`, "ok");
   } catch (e) {
-    setMsg($(resultId), String(e), "err");
+    setMsg($("testResult"), String(e), "err");
   } finally {
     btn.disabled = false;
   }
-}
-$("testBackup").addEventListener("click", () => testLink("backupShareUrl", "testBackup", "testBackupResult"));
+});
+$("newAlbumUrl").addEventListener("keydown", (e) => {
+  if (e.key === "Enter") $("addAlbum").click();
+});
 
-$("test").addEventListener("click", async () => {
-  await testLink("shareUrl", "test", "testResult");
+// The backup address field only shows while the Advanced option is on.
+function showBackupRow() {
+  $("backupLinkRow").hidden = !$("useBackupDomain").checked;
+}
+$("useBackupDomain").addEventListener("change", showBackupRow);
+
+$("testBackup").addEventListener("click", async () => {
+  const btn = $("testBackup");
+  if (!albums.length) return setMsg($("testBackupResult"), "Add an album first.", "err");
+  btn.disabled = true;
+  setMsg($("testBackupResult"), "Checking…");
+  try {
+    const n = await invoke("test_backup_domain", { domain: $("backupDomain").value.trim(), albumUrl: albums[0].url });
+    setMsg($("testBackupResult"), `Connected through the backup address: ${n} photos in “${albumTitle(albums[0])}”.`, "ok");
+  } catch (e) {
+    setMsg($("testBackupResult"), String(e), "err");
+  } finally {
+    btn.disabled = false;
+  }
 });
 
 $("save").addEventListener("click", async () => {
@@ -356,7 +438,7 @@ $("save").addEventListener("click", async () => {
     await invoke("save_config", { config: next });
     await invoke("set_autostart", { enabled: $("autostart").checked }).catch(() => {});
     config = next;
-    setMsg($("status"), next.shareUrl ? "Saved. Changing wallpaper…" : "Saved.", "ok");
+    setMsg($("status"), next.albums.length ? "Saved. Changing wallpaper…" : "Saved.", "ok");
   } catch (e) {
     setMsg($("status"), String(e), "err");
   }

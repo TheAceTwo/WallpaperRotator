@@ -12,7 +12,7 @@ pub const QUEUE_LEN: usize = 3;
 pub struct QueuedPhoto {
     pub asset_id: String,
     pub path: PathBuf,
-    /// Settings it was picked for; a mismatch means it's stale.
+    /// The album it came from; stale once that album is no longer in use.
     pub share_url: String,
     pub orientation: Orientation,
 }
@@ -21,13 +21,13 @@ pub struct QueuedPhoto {
 /// gone. Returns the files to delete.
 pub fn prune_queue(
     queue: &mut Vec<QueuedPhoto>,
-    share_url: &str,
+    active_albums: &[String],
     orientation: Orientation,
     exists: impl Fn(&Path) -> bool,
 ) -> Vec<PathBuf> {
     let mut removed = Vec::new();
     queue.retain(|q| {
-        let keep = q.share_url == share_url && q.orientation == orientation && exists(&q.path);
+        let keep = active_albums.contains(&q.share_url) && q.orientation == orientation && exists(&q.path);
         if !keep {
             removed.push(q.path.clone());
         }
@@ -113,7 +113,7 @@ mod tests {
             q("d", "u1", Orientation::Landscape),     // file missing
             q("e", "u1", Orientation::Landscape),
         ];
-        let removed = prune_queue(&mut queue, "u1", Orientation::Landscape, |p| !p.ends_with("d.jpg"));
+        let removed = prune_queue(&mut queue, &["u1".to_string()], Orientation::Landscape, |p| !p.ends_with("d.jpg"));
         assert_eq!(queue.iter().map(|x| x.asset_id.as_str()).collect::<Vec<_>>(), ["a", "e"]);
         assert_eq!(removed.len(), 3);
     }

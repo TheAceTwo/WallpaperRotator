@@ -51,35 +51,72 @@ fn get_config(app: AppHandle) -> Config {
 
 #[tauri::command]
 fn save_config(app: AppHandle, config: Config) -> Result<(), String> {
-    if !config.share_url.trim().is_empty() {
-        ShareLink::parse(&config.share_url).map_err(|e| e.to_string())?;
-    }
-    if config.use_backup_link && !config.backup_share_url.trim().is_empty() {
-        ShareLink::parse(&config.backup_share_url).map_err(|e| format!("Backup link: {e}"))?;
-    }
     let mut config = config;
+    config.migrate();
+    for a in &mut config.albums {
+        a.url = a.url.trim().to_string();
+        if !a.url.is_empty() {
+            ShareLink::parse(&a.url).map_err(|e| format!("{}: {e}", if a.name.is_empty() { &a.url } else { &a.name }))?;
+        }
+    }
+    config.albums.retain(|a| !a.url.is_empty());
+    if config.use_backup_domain && !config.backup_domain.trim().is_empty() {
+        config.backup_domain =
+            immich_core::parse_server(&config.backup_domain).map_err(|e| format!("Backup address: {e}"))?;
+    }
     config.interval_minutes = config.interval_minutes.clamp(1, 7 * 24 * 60);
     config::save_config(&app, &config).map_err(|e| e.to_string())?;
     let eng = engine(&app);
     let old = eng.config();
-    let link_changed = old.share_url != config.share_url
-        || old.backup_share_url != config.backup_share_url
-        || old.use_backup_link != config.use_backup_link;
+    let links_changed = old.albums != config.albums
+        || old.backup_domain != config.backup_domain
+        || old.use_backup_domain != config.use_backup_domain;
     *eng.config.lock().unwrap() = config;
-    if link_changed {
+    if links_changed {
         eng.invalidate_cache();
     }
-    // Drop cached photos that no longer fit (other link/orientation) and refill.
+    // Drop cached photos that no longer fit (other albums/orientation) and refill.
     eng.settings_changed(&app);
     refresh_tray(&app);
     eng.wake.notify_one();
     Ok(())
 }
 
-/// Check a share link without saving it. Returns the number of photos.
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct AlbumInfo {
+    name: Option<String>,
+    photo_count: usize,
+}
+
+/// Check an album link (on its own address, then the backup address if
+/// given): its name and how many photos it has.
 #[tauri::command]
-async fn test_link(share_url: String) -> Result<usize, String> {
-    let link = ShareLink::parse(&share_url).map_err(|e| e.to_string())?;
+async fn inspect_album(url: String, backup_domain: Option<String>) -> Result<AlbumInfo, String> {
+    let link = ShareLink::parse(&url).map_err(|e| e.to_string())?;
+    let mut servers = vec![link.server.clone()];
+    if let Some(b) = backup_domain.filter(|b| !b.trim().is_empty()) {
+        servers.push(immich_core::parse_server(&b).map_err(|e| format!("Backup address: {e}"))?);
+    }
+    let mut errors = Vec::new();
+    for server in servers {
+        let client = ImmichClient::new(link.with_server(&server)).map_err(|e| e.to_string())?;
+        match client.list_assets().await {
+            Ok(assets) => {
+                let name = client.album_name().await.ok().flatten();
+                return Ok(AlbumInfo { name, photo_count: assets.iter().filter(|a| a.is_image).count() });
+            }
+            Err(e) => errors.push(e.to_string()),
+        }
+    }
+    Err(errors.join(" · "))
+}
+
+/// Check that an album is reachable through the backup address.
+#[tauri::command]
+async fn test_backup_domain(domain: String, album_url: String) -> Result<usize, String> {
+    let server = immich_core::parse_server(&domain).map_err(|e| e.to_string())?;
+    let link = ShareLink::parse(&album_url).map_err(|e| e.to_string())?.with_server(&server);
     let client = ImmichClient::new(link).map_err(|e| e.to_string())?;
     let assets = client.list_assets().await.map_err(|e| e.to_string())?;
     Ok(assets.iter().filter(|a| a.is_image).count())
@@ -376,7 +413,8 @@ fn main() {
             platform,
             get_config,
             save_config,
-            test_link,
+            inspect_album,
+            test_backup_domain,
             next_wallpaper,
             get_status,
             get_autostart,
@@ -407,7 +445,7 @@ fn main() {
 
             // First run (no link yet) or a manual launch: show settings.
             let launched_at_login = std::env::args().any(|a| a == "--background");
-            if engine(&handle).config().share_url.is_empty() || !launched_at_login {
+            if !engine(&handle).config().has_albums() || !launched_at_login {
                 show_settings(&handle);
             }
 
@@ -443,7 +481,7 @@ fn main() {
             // or while an update installs (so its progress stays visible).
             WindowEvent::Focused(false) => {
                 let app = window.app_handle();
-                let configured = !engine(app).config().share_url.trim().is_empty();
+                let configured = engine(app).config().has_albums();
                 let installing = updater::INSTALLING.load(std::sync::atomic::Ordering::SeqCst);
                 if configured && !installing && window.is_visible().unwrap_or(false) {
                     let _ = window.hide();

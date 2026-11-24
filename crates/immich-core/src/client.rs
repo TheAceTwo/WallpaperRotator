@@ -83,6 +83,17 @@ impl ImmichClient {
         Ok(self.list_assets_with_source().await?.0)
     }
 
+    /// The shared album's name, if the link is for an album.
+    pub async fn album_name(&self) -> Result<Option<String>, Error> {
+        let me = self.get_json("/api/shared-links/me", &[]).await?;
+        Ok(me
+            .get("album")
+            .and_then(|a| a.get("albumName"))
+            .and_then(Value::as_str)
+            .map(str::to_string)
+            .filter(|n| !n.trim().is_empty()))
+    }
+
     pub async fn list_assets_with_source(&self) -> Result<(Vec<Asset>, ListSource), Error> {
         let me = self.get_json("/api/shared-links/me", &[]).await?;
 

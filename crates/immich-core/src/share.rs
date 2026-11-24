@@ -54,6 +54,13 @@ impl ShareLink {
         Ok(Self { server, auth })
     }
 
+    /// The same album link on another address, e.g. the home-network or
+    /// Tailscale address of the same Immich server (only the server changes;
+    /// `/s/...` or `/share/...` stays the same).
+    pub fn with_server(&self, server: &str) -> ShareLink {
+        ShareLink { server: server.trim_end_matches('/').to_string(), auth: self.auth.clone() }
+    }
+
     /// Query parameter used to authenticate API calls with this link.
     pub fn auth_param(&self) -> (&'static str, &str) {
         match &self.auth {
@@ -61,6 +68,23 @@ impl ShareLink {
             ShareAuth::Slug(s) => ("slug", s.as_str()),
         }
     }
+}
+
+/// Normalise a server address such as `https://192.168.1.123:2283` to
+/// `scheme://host[:port]`. Anything after the address is ignored, so pasting
+/// a whole album link works too. Without a scheme, `https://` is assumed.
+pub fn parse_server(input: &str) -> Result<String, Error> {
+    let input = input.trim();
+    let with_scheme = if input.contains("://") { input.to_string() } else { format!("https://{input}") };
+    let url = Url::parse(&with_scheme).map_err(|_| Error::InvalidShareLink("not a valid address".into()))?;
+    if url.scheme() != "https" && url.scheme() != "http" {
+        return Err(Error::InvalidShareLink("address must start with https:// or http://".into()));
+    }
+    let host = url.host_str().ok_or_else(|| Error::InvalidShareLink("address has no host".into()))?;
+    Ok(match url.port() {
+        Some(p) => format!("{}://{}:{}", url.scheme(), host, p),
+        None => format!("{}://{}", url.scheme(), host),
+    })
 }
 
 #[cfg(test)]
@@ -80,6 +104,22 @@ mod tests {
         let l = ShareLink::parse("  http://10.0.0.5:2283/s/family/photos/abc  ").unwrap();
         assert_eq!(l.server, "http://10.0.0.5:2283");
         assert_eq!(l.auth, ShareAuth::Slug("family".into()));
+    }
+
+    #[test]
+    fn swaps_only_the_server() {
+        let l = ShareLink::parse("https://immich.theacetwo.net/s/thealbumiwannashare").unwrap();
+        let home = l.with_server("https://192.168.1.123:2283");
+        assert_eq!(home.server, "https://192.168.1.123:2283");
+        assert_eq!(home.auth, ShareAuth::Slug("thealbumiwannashare".into()));
+    }
+
+    #[test]
+    fn parses_server_addresses() {
+        assert_eq!(parse_server("https://192.168.1.123:2283").unwrap(), "https://192.168.1.123:2283");
+        assert_eq!(parse_server(" http://100.64.0.5:2283/s/album ").unwrap(), "http://100.64.0.5:2283");
+        assert_eq!(parse_server("192.168.1.123:2283").unwrap(), "https://192.168.1.123:2283");
+        assert!(parse_server("ftp://x").is_err());
     }
 
     #[test]

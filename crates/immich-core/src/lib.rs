@@ -9,7 +9,7 @@ pub mod share;
 pub use client::{Image, ImmichClient, ListSource};
 pub use model::{Asset, Orientation};
 pub use picker::{pick, History};
-pub use share::{ShareAuth, ShareLink};
+pub use share::{parse_server, ShareAuth, ShareLink};
 
 #[derive(Debug, thiserror::Error)]
 pub enum Error {

@@ -166,3 +166,21 @@ input[type="range"] { width: 100%; accent-color: var(--accent); margin: 4px 0 0;
 .effects { margin-top: 6px; }
 .fx-title { margin: 12px 0 0; font-weight: 600; color: var(--muted); font-size: 12.5px; text-transform: uppercase; letter-spacing: 0.04em; }
 #otherFx { padding-left: 12px; border-left: 2px solid var(--border); margin-top: 6px; }
+
+/* Album list */
+.albums { list-style: none; margin: 0 0 8px; padding: 0; }
+.albums li {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 4px 6px 10px;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  margin-bottom: 6px;
+  background: var(--bg);
+}
+.albums .album-text { flex: 1; min-width: 0; }
+.albums .album-name { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.albums .album-url { font-size: 12px; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+#albumModeRow { margin-top: 4px; }
+.indent-select { margin: 6px 0 0 24px; width: calc(100% - 24px); }
