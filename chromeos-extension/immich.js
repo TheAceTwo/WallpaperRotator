@@ -21,6 +21,37 @@ export function parseShareLink(input) {
   return { server: url.origin, authParam: auth[0], authValue: auth[1] };
 }
 
+/**
+ * Normalise a server address like "https://192.168.1.123:2283" to its origin.
+ * Anything after the address is ignored; no scheme means https://.
+ */
+export function parseServer(input) {
+  const raw = String(input || "").trim();
+  let url;
+  try {
+    url = new URL(raw.includes("://") ? raw : `https://${raw}`);
+  } catch {
+    throw new Error("Not a valid address.");
+  }
+  if (url.protocol !== "https:" && url.protocol !== "http:") {
+    throw new Error("The address must start with https:// or http://");
+  }
+  return url.origin;
+}
+
+/** The same album link on another server (only the address changes). */
+export function withServer(link, server) {
+  return { ...link, server: server.replace(/\/+$/, "") };
+}
+
+/** Album links to use: all of them, or just the chosen one. */
+export function activeAlbumUrls(s) {
+  const all = (s.albums || []).map((a) => String(a.url || "").trim()).filter(Boolean);
+  if (s.albumMode !== "one") return all;
+  const chosen = all.find((u) => u === String(s.selectedAlbum || "").trim()) || all[0];
+  return chosen ? [chosen] : [];
+}
+
 /** One AssetResponseDto → {id, isImage, ratio, mime} */
 export function assetFromDto(v) {
   if (!v || typeof v.id !== "string" || v.isTrashed === true) return null;
@@ -78,6 +109,13 @@ export class ImmichClient {
 
   async json(path, query) {
     return (await this.get(path, query)).json();
+  }
+
+  /** The shared album's name, if the link is for an album. */
+  async albumName() {
+    const me = await this.json("/api/shared-links/me");
+    const name = me?.album?.albumName;
+    return typeof name === "string" && name.trim() ? name : null;
   }
 
   /** Same fallback chain as the Rust client. */
@@ -141,8 +179,8 @@ export class ImmichClient {
 }
 
 /**
- * Links to try, in order: main, then backup (if set and different), except
- * that whichever worked last time goes first.
+ * Servers (or links) to try, in order: main, then backup (if set and
+ * different), except that whichever worked last time goes first.
  */
 export function linkOrder(main, backup, lastGood) {
   const urls = [String(main || "").trim()];
@@ -154,9 +192,9 @@ export function linkOrder(main, backup, lastGood) {
 }
 
 /**
- * Run `fn(client)` against each link until one succeeds. Calls
- * `onSuccess(url)` with the link that worked; if all fail, throws one error
- * naming each link's problem.
+ * Run `fn(client)` against each server until one succeeds. Calls
+ * `onSuccess(server)` with the one that worked; if all fail, throws one
+ * error naming each address's problem.
  */
 export async function tryLinks(urls, main, fn, onSuccess = () => {}, makeClient = (u) => new ImmichClient(parseShareLink(u))) {
   const errors = [];
@@ -170,7 +208,7 @@ export async function tryLinks(urls, main, fn, onSuccess = () => {}, makeClient 
     }
   }
   if (errors.length === 1) throw new Error(errors[0][1]);
-  throw new Error(errors.map(([u, m]) => `${u === main ? "Main link" : "Backup link"}: ${m}`).join(" · "));
+  throw new Error(errors.map(([u, m]) => `${u === main ? "Main address" : "Backup address"}: ${m}`).join(" · "));
 }
 
 export function matchesOrientation(a, orientation) {

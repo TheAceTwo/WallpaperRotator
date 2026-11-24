@@ -1,7 +1,7 @@
 // Run: node --test chromeos-extension/test/
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { ImmichClient, UnauthorizedError, linkOrder, parseShareLink, pick, tryLinks } from "../immich.js";
+import { ImmichClient, UnauthorizedError, activeAlbumUrls, linkOrder, parseServer, parseShareLink, pick, tryLinks, withServer } from "../immich.js";
 
 /** Fake fetch routing on pathname (+ optional query predicate). */
 function fakeFetch(routes) {
@@ -108,6 +108,26 @@ test("tryLinks names both links when neither works", async () => {
   const down = () => Promise.reject(new TypeError("Failed to fetch"));
   await assert.rejects(
     tryLinks([m, b], m, (c) => c.listAssets(), undefined, (u) => new ImmichClient(parseShareLink(u), down)),
-    /Main link: Failed to fetch · Backup link: Failed to fetch/,
+    /Main address: Failed to fetch · Backup address: Failed to fetch/,
   );
+});
+
+test("parseServer keeps just the address", () => {
+  assert.equal(parseServer("https://192.168.1.123:2283"), "https://192.168.1.123:2283");
+  assert.equal(parseServer(" http://100.64.0.5:2283/s/album "), "http://100.64.0.5:2283");
+  assert.equal(parseServer("192.168.1.123:2283"), "https://192.168.1.123:2283");
+  assert.throws(() => parseServer("ftp://x"));
+});
+
+test("withServer swaps only the server, keeping /s/<slug>", () => {
+  const l = withServer(parseShareLink("https://immich.theacetwo.net/s/thealbumiwannashare"), "https://192.168.1.123:2283");
+  assert.deepEqual(l, { server: "https://192.168.1.123:2283", authParam: "slug", authValue: "thealbumiwannashare" });
+});
+
+test("activeAlbumUrls follows the album mode", () => {
+  const albums = [{ url: "https://x/s/a" }, { url: "https://x/s/b" }];
+  assert.deepEqual(activeAlbumUrls({ albums, albumMode: "all" }), ["https://x/s/a", "https://x/s/b"]);
+  assert.deepEqual(activeAlbumUrls({ albums, albumMode: "one", selectedAlbum: "https://x/s/b" }), ["https://x/s/b"]);
+  assert.deepEqual(activeAlbumUrls({ albums, albumMode: "one", selectedAlbum: "gone" }), ["https://x/s/a"]);
+  assert.deepEqual(activeAlbumUrls({ albums: [] }), []);
 });
