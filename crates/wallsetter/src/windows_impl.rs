@@ -62,14 +62,17 @@ unsafe fn ensure_fill(dw: &IDesktopWallpaper) -> windows::core::Result<()> {
 ///
 /// Windows' slideshow shows the same picture on every monitor. Falls back to
 /// [`set_desktop`] if anything about the slideshow fails.
-pub fn set_desktop_slideshow(prev: Option<&Path>, next: &Path) -> Result<()> {
+/// Returns `Ok(None)` when the slideshow (crossfade) was used, or
+/// `Ok(Some(reason))` when Windows refused it and the picture was set the
+/// plain way instead.
+pub fn set_desktop_slideshow(prev: Option<&Path>, next: &Path) -> Result<Option<String>> {
     match slideshow_com(prev, next) {
-        Ok(()) => Ok(()),
-        Err(_) => set_desktop(next),
+        Ok(()) => Ok(None),
+        Err(reason) => set_desktop(next).map(|()| Some(reason)),
     }
 }
 
-fn slideshow_com(prev: Option<&Path>, next: &Path) -> windows::core::Result<()> {
+fn slideshow_com(prev: Option<&Path>, next: &Path) -> std::result::Result<(), String> {
     use windows::Win32::System::Com::CoTaskMemFree;
     use windows::Win32::UI::Shell::Common::ITEMIDLIST;
     use windows::Win32::UI::Shell::{
@@ -80,15 +83,18 @@ fn slideshow_com(prev: Option<&Path>, next: &Path) -> windows::core::Result<()> 
 
     unsafe {
         let init = CoInitializeEx(None, COINIT_APARTMENTTHREADED);
-        let result = (|| -> windows::core::Result<()> {
-            let dw: IDesktopWallpaper = CoCreateInstance(&DesktopWallpaper, None, CLSCTX_ALL)?;
-            ensure_fill(&dw)?;
+        let result = (|| -> std::result::Result<(), String> {
+            let step = |name: &'static str| move |e: windows::core::Error| format!("{name}: {}", e.message());
+            let dw: IDesktopWallpaper =
+                CoCreateInstance(&DesktopWallpaper, None, CLSCTX_ALL).map_err(step("open desktop wallpaper"))?;
+            ensure_fill(&dw).map_err(step("set Fill"))?;
 
             // Slideshow list: [previous, next] so "forward" fades prev -> next.
             let mut pidls: Vec<*mut ITEMIDLIST> = Vec::new();
             for p in prev.into_iter().chain(std::iter::once(next)) {
                 let mut pidl = std::ptr::null_mut();
-                SHParseDisplayName(&HSTRING::from(p.as_os_str()), None, &mut pidl, 0, None)?;
+                SHParseDisplayName(&HSTRING::from(p.as_os_str()), None, &mut pidl, 0, None)
+                    .map_err(step("find picture file"))?;
                 pidls.push(pidl);
             }
             let consts: Vec<*const ITEMIDLIST> = pidls.iter().map(|p| *p as *const _).collect();
@@ -96,10 +102,11 @@ fn slideshow_com(prev: Option<&Path>, next: &Path) -> windows::core::Result<()> 
             for p in pidls {
                 ILFree(Some(p));
             }
-            let items = items?;
+            let items = items.map_err(step("build slideshow list"))?;
 
-            dw.SetSlideshowOptions(DESKTOP_SLIDESHOW_OPTIONS(0), NEVER_MS)?; // in order, no shuffle
-            dw.SetSlideshow(&items)?;
+            // In order, no shuffle.
+            dw.SetSlideshowOptions(DESKTOP_SLIDESHOW_OPTIONS(0), NEVER_MS).map_err(step("slideshow options"))?;
+            dw.SetSlideshow(&items).map_err(step("start slideshow"))?;
 
             // After SetSlideshow Windows normally still shows `prev` (first in
             // the list); one step forward crossfades to `next`. Decide once,
@@ -112,7 +119,7 @@ fn slideshow_com(prev: Option<&Path>, next: &Path) -> windows::core::Result<()> 
             let is = |path: &Path, cur: &str| cur.eq_ignore_ascii_case(&path.to_string_lossy());
             let already_next = current.as_deref().is_some_and(|c| is(next, c));
             if prev.is_some() && !already_next {
-                dw.AdvanceSlideshow(PCWSTR::null(), DSD_FORWARD)?;
+                dw.AdvanceSlideshow(PCWSTR::null(), DSD_FORWARD).map_err(step("advance slideshow"))?;
             }
             Ok(())
         })();

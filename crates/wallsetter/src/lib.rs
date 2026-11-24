@@ -32,8 +32,8 @@ pub const SUPPORTS_SEPARATE_LOCK_SCREEN: bool = cfg!(windows);
 
 /// Windows only; elsewhere a plain wallpaper change.
 #[cfg(not(windows))]
-pub fn set_desktop_slideshow(_prev: Option<&Path>, next: &Path) -> Result<()> {
-    set_desktop(next)
+pub fn set_desktop_slideshow(_prev: Option<&Path>, next: &Path) -> Result<Option<String>> {
+    set_desktop(next).map(|()| None)
 }
 
 #[cfg(not(any(windows, target_os = "macos")))]

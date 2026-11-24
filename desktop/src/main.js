@@ -17,7 +17,9 @@ function describeStatus(s) {
   if (s.lastChanged) parts.push(`Last changed ${new Date(s.lastChanged * 1000).toLocaleTimeString()}`);
   if (s.photoCount != null) parts.push(`${s.photoCount} photos in album`);
   if (s.lockScreenNote) parts.push(s.lockScreenNote);
-  return [parts.join(" · "), s.lockScreenNote?.startsWith("Lock screen not") ? "err" : ""];
+  if (s.transitionNote) parts.push(s.transitionNote);
+  const warn = s.lockScreenNote?.startsWith("Lock screen not") || !!s.transitionNote;
+  return [parts.join(" · "), warn ? "err" : ""];
 }
 
 function showStatus(s) {
@@ -235,6 +237,10 @@ for (const id of Object.keys(fxSliders)) {
 }
 $("separateOtherMonitors").addEventListener("change", applyEffects);
 $("dimLockScreen").addEventListener("change", applyEffects);
+
+$("openLog").addEventListener("click", () =>
+  invoke("open_log").catch((e) => setMsg($("status"), String(e), "err")),
+);
 
 $("closeFlyout").addEventListener("click", () => invoke("hide_settings").catch(() => {}));
 $("dismissTrayHint").addEventListener("click", () => {

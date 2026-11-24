@@ -21,6 +21,8 @@ pub struct Status {
     pub last_error: Option<String>,
     pub photo_count: Option<usize>,
     pub lock_screen_note: Option<String>,
+    /// Why the smooth fade wasn't used last time (Windows refused the slideshow).
+    pub transition_note: Option<String>,
 }
 
 struct ListCache {
@@ -38,6 +40,8 @@ pub struct Engine {
     last_good_link: Mutex<Option<String>>,
     /// Serialises rotations so the timer and "Next" can't overlap.
     busy: tokio::sync::Mutex<()>,
+    /// How the photos for the current change were obtained (for the log).
+    fetch_note: Mutex<String>,
     /// Only one cache refill at a time.
     refilling: tokio::sync::Mutex<()>,
     /// Wakes the scheduler (settings changed / resumed).
@@ -54,6 +58,7 @@ impl Engine {
             last_good_link: Mutex::new(None),
             busy: tokio::sync::Mutex::new(()),
             refilling: tokio::sync::Mutex::new(()),
+            fetch_note: Mutex::new(String::new()),
             wake: Notify::new(),
         }
     }
@@ -187,6 +192,7 @@ impl Engine {
         let dir = config::wallpaper_dir(app);
         std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
         let stamp = now_millis();
+        let fetch_started = Instant::now();
 
         let want_lock = cfg.set_lock_screen && wallsetter::SUPPORTS_SEPARATE_LOCK_SCREEN;
         let extras = if cfg.per_virtual_desktop && cfg!(windows) {
@@ -242,6 +248,7 @@ impl Engine {
             }
         }
 
+        *self.fetch_note.lock().unwrap() = format!("photos={need} fetch={}ms", fetch_started.elapsed().as_millis());
         let desktop_orig = originals[0].1.clone();
         let extra_origs: Vec<PathBuf> = originals.iter().skip(1).take(extras).map(|(_, p)| p.clone()).collect();
         let lock_orig = if !want_lock {
@@ -369,6 +376,7 @@ impl Engine {
         lock_orig: Option<PathBuf>,
         stamp: u64,
     ) -> Result<(), String> {
+        let prepare_started = Instant::now();
         let fit = screen_fit(app);
         let main_fx = cfg.main_effects();
         let other_fx = cfg.other_effects();
@@ -396,6 +404,10 @@ impl Engine {
             extra_files.push(processed(orig, dir, &format!("vd{}", i + 1), stamp, main_fx, fit).await?);
         }
 
+        let prepare_ms = prepare_started.elapsed().as_millis();
+        let desktop_started = Instant::now();
+        let mut method = "desktop off";
+
         let prev_desktop = self.state.lock().unwrap().current_desktop_file.clone().filter(|p| p.exists());
         if cfg.set_desktop {
             let mut done = false;
@@ -408,16 +420,31 @@ impl Engine {
                     .await
                     .map(|r| r.is_ok())
                     .unwrap_or(false);
+                if done {
+                    method = "virtual desktops";
+                }
             }
             if !done {
                 let smooth = cfg.smooth_transitions && desktop_file == other_file;
-                apply_desktop(app, desktop_file.clone(), other_file.clone(), prev_desktop.clone(), smooth).await?;
+                let refused = apply_desktop(app, desktop_file.clone(), other_file.clone(), prev_desktop.clone(), smooth).await?;
+                method = match (&refused, smooth, desktop_file == other_file) {
+                    (Some(_), _, _) => "plain (slideshow refused)",
+                    (None, true, _) => "slideshow fade",
+                    (None, false, true) => "plain",
+                    (None, false, false) => "per-monitor (no fade)",
+                };
+                self.status.lock().unwrap().transition_note = refused.map(|why| {
+                    format!("Smooth transitions aren't working on this PC, so pictures switch without a fade ({why}).")
+                });
             }
             let mut st = self.state.lock().unwrap();
             st.current_desktop_file = Some(desktop_file.clone());
             st.round_desktop_files = std::iter::once(desktop_file.clone()).chain(extra_files.iter().cloned()).collect();
             st.next_space_photo = 1;
         }
+        let desktop_ms = desktop_started.elapsed().as_millis();
+        let lock_started = Instant::now();
+        let had_lock = lock_file.is_some();
         if let Some(lock) = lock_file.clone() {
             // Don't stack the lock-screen update on top of the desktop
             // change: each makes Windows decode an image, and together they
@@ -437,6 +464,22 @@ impl Engine {
                 Err(e) => Some(format!("Lock screen not changed: {e}")),
             };
         }
+
+        let lock_ms = if had_lock {
+            format!("{}ms (incl. 3s wait)", lock_started.elapsed().as_millis())
+        } else {
+            "off".into()
+        };
+        let fetch = std::mem::take(&mut *self.fetch_note.lock().unwrap());
+        let fetch = if fetch.is_empty() { "re-apply".to_string() } else { fetch };
+        let note = self.status.lock().unwrap().transition_note.clone().unwrap_or_default();
+        crate::diag::log(
+            app,
+            &format!(
+                "change: {fetch} prepare={prepare_ms}ms desktop={desktop_ms}ms [{method}] lock={lock_ms} monitors={} {note}",
+                monitor_count(app).await
+            ),
+        );
 
         // Keep the previous picture too: Windows may still be fading from it.
         let mut keep = vec![Some(desktop_orig), lock_orig, Some(desktop_file), Some(other_file), lock_file, prev_desktop];
@@ -609,14 +652,14 @@ async fn apply_desktop(
     others: PathBuf,
     _prev: Option<PathBuf>,
     _smooth: bool,
-) -> Result<(), String> {
+) -> Result<Option<String>, String> {
     // AppKit needs the main thread.
     let (tx, rx) = tokio::sync::oneshot::channel();
     app.run_on_main_thread(move || {
         let _ = tx.send(wallsetter::set_desktop_split(&main, &others));
     })
     .map_err(|e| e.to_string())?;
-    rx.await.map_err(|e| e.to_string())?
+    rx.await.map_err(|e| e.to_string())?.map(|()| None)
 }
 
 /// With `smooth` (Windows), go through Windows' slideshow so it crossfades
@@ -628,14 +671,14 @@ async fn apply_desktop(
     others: PathBuf,
     prev: Option<PathBuf>,
     smooth: bool,
-) -> Result<(), String> {
+) -> Result<Option<String>, String> {
     tauri::async_runtime::spawn_blocking(move || {
         if main == others && smooth {
             wallsetter::set_desktop_slideshow(prev.as_deref(), &main)
         } else if main == others {
-            wallsetter::set_desktop(&main)
+            wallsetter::set_desktop(&main).map(|()| None)
         } else {
-            wallsetter::set_desktop_split(&main, &others)
+            wallsetter::set_desktop_split(&main, &others).map(|()| None)
         }
     })
     .await

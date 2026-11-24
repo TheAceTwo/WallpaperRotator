@@ -2,6 +2,7 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod config;
+mod diag;
 mod effects;
 mod engine;
 mod flyout;
@@ -160,6 +161,12 @@ async fn virtual_desktops() -> Option<usize> {
         return Some(0);
     }
     tauri::async_runtime::spawn_blocking(wallsetter::system::virtual_desktop_count).await.ok().flatten()
+}
+
+/// Open the diagnostics log (one line per wallpaper change) in a text editor.
+#[tauri::command]
+fn open_log(app: AppHandle) -> Result<(), String> {
+    diag::open(&app)
 }
 
 /// Version of an update that was found but not installed yet.
@@ -384,6 +391,7 @@ fn main() {
             pending_update,
             hide_settings,
             virtual_desktops,
+            open_log,
             dismiss_tray_hint
         ])
         .setup(|app| {
